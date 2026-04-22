@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Overlay</title>
+    <style>
+      * { box-sizing: border-box; }
+
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: transparent;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      /* ── Capsule ───────────────────────────────────────────────────────────── */
+      .capsule {
+        position: fixed;
+        inset: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 14px;
+        gap: 10px;
+        border-radius: 24px;
+        background: rgba(16, 16, 18, 0.78);
+        -webkit-backdrop-filter: blur(18px) saturate(1.3);
+        backdrop-filter: blur(18px) saturate(1.3);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+          0 1px 2px rgba(0, 0, 0, 0.4),
+          0 8px 24px rgba(0, 0, 0, 0.32);
+        color: rgba(255, 255, 255, 0.92);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        opacity: 0;
+        transform: scale(0.94);
+        transition:
+          opacity 180ms cubic-bezier(0.2, 0.9, 0.3, 1),
+          transform 180ms cubic-bezier(0.2, 0.9, 0.3, 1),
+          box-shadow 120ms ease-out;
+        will-change: transform, opacity;
+      }
+
+      .capsule.ready {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .capsule.ready:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+          0 2px 4px rgba(0, 0, 0, 0.45),
+          0 12px 30px rgba(0, 0, 0, 0.38);
+      }
+
+      /* "Quiet" dim when idle / near-silence */
+      .capsule.quiet {
+        opacity: 0.6;
+      }
+
+      /* Hiding motion (fade + shrink before the Tauri window actually hides) */
+      .capsule.hiding {
+        opacity: 0;
+        transform: scale(0.96);
+        transition:
+          opacity 220ms ease-out,
+          transform 220ms ease-out;
+        pointer-events: none;
+      }
+
+      /* ── Regions ───────────────────────────────────────────────────────────── */
+      .slot {
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+      }
+
+      .wave {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .wave svg {
+        display: block;
+        width: 100%;
+        height: 24px;
+      }
+
+      /* ── Mic icon ──────────────────────────────────────────────────────────── */
+      .mic {
+        opacity: 0.6;
+        transition: opacity 200ms ease-out;
+      }
+
+      .capsule.recording:not(.quiet) .mic {
+        opacity: 0.88;
+      }
+
+      .capsule.transcribing .mic,
+      .capsule.processing .mic {
+        opacity: 0;
+      }
+
+      /* ── Stop icon ─────────────────────────────────────────────────────────── */
+      .stop {
+        width: 20px;
+        height: 20px;
+        margin: -2px;
+        padding: 0;
+        background: transparent;
+        border: 0;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: inherit;
+        opacity: 0.3;
+        pointer-events: none;
+        transition:
+          opacity 150ms ease-out,
+          transform 120ms ease-out;
+      }
+
+      .capsule.ready .stop {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .stop:hover .stop-glyph {
+        fill: rgba(255, 255, 255, 0.9);
+      }
+
+      .stop:hover {
+        transform: scale(1.08);
+      }
+
+      .capsule.transcribing .stop,
+      .capsule.processing .stop {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 250ms ease-out;
+      }
+
+      .stop-glyph {
+        width: 9px;
+        height: 9px;
+        fill: rgba(255, 255, 255, 0.55);
+        transition: fill 120ms ease-out;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="capsule recording" id="capsule">
+      <div class="slot">
+        <svg class="mic" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <rect x="5" y="1.5" width="4" height="7" rx="2" stroke="white" stroke-opacity="0.9" stroke-width="1.2" fill="none"></rect>
+          <path d="M2.75 7C2.75 9.35 4.65 11.25 7 11.25C9.35 11.25 11.25 9.35 11.25 7" stroke="white" stroke-opacity="0.9" stroke-width="1.2" stroke-linecap="round"></path>
+          <line x1="7" y1="11.25" x2="7" y2="12.75" stroke="white" stroke-opacity="0.9" stroke-width="1.2" stroke-linecap="round"></line>
+        </svg>
+      </div>
+
+      <div class="wave">
+        <svg viewBox="0 0 180 24" preserveAspectRatio="none" aria-hidden="true">
+          <path id="wave-path"
+                d="M 0 12"
+                fill="none"
+                stroke="rgba(255,255,255,0.72)"
+                stroke-width="1.25"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                vector-effect="non-scaling-stroke"></path>
+        </svg>
+      </div>
+
+      <button class="stop" id="stop-btn" type="button" aria-label="Stop recording" tabindex="-1">
+        <svg class="stop-glyph" viewBox="0 0 9 9" aria-hidden="true">
+          <rect width="9" height="9" rx="2" />
+        </svg>
+      </button>
+    </div>
+
+    <script>
+      (function () {
+        const capsule = document.getElementById("capsule");
+        const wavePath = document.getElementById("wave-path");
+        const stopBtn = document.getElementById("stop-btn");
+
+        // ── Config ──────────────────────────────────────────────────────────────
+        const INPUT_N = 9;    // bands the main app sends
+        const SAMPLE_N = 16;  // display points along the line
+        const WIDTH = 180;
+        const MID_Y = 12;
+        const PEAK_PX = 10;        // amplitude clamp for listening state
+        const IDLE_AMP_PX = 1.5;
+        const IDLE_PERIOD_MS_BASE = 3000;
+        const IDLE_SILENCE_MS = 600;
+        const PROC_AMP_MIN = 2;
+        const PROC_AMP_MAX = 6;
+        const PROC_PERIOD_MS = 1200;
+        const LERP_T = 0.25;        // per-frame ease toward target
+        const NOISE_AMP_PX = 0.5;   // ±0.25px wobble on target (organic feel)
+        const READY_DELAY_MS = 150; // stop button ramp-in
+
+        // ── State ──────────────────────────────────────────────────────────────
+        // target[i] / current[i] = signed offset from midline (alternates up/down)
+        const target = new Float32Array(SAMPLE_N);
+        const current = new Float32Array(SAMPLE_N);
+        // persistent per-sample phase offsets for idle breathing (organic)
+        const phaseOffset = new Float32Array(SAMPLE_N);
+        for (let i = 0; i < SAMPLE_N; i++) {
+          phaseOffset[i] = (Math.random() - 0.5) * 0.08;
+        }
+        // idle tempo jitter — reshuffled every cycle
+        let idlePeriodMs = IDLE_PERIOD_MS_BASE;
+        let idleCycleStart = performance.now();
+
+        let state = "recording"; // "recording" | "transcribing" | "processing" | "hiding"
+        let latestLevels = null;   // last received Float array, or null (idle)
+        let lastLoudTs = 0;        // last time any level > 0.04
+
+        // ── Public JS contract (called from Rust via .eval) ────────────────────
+        window.setState = function (next) {
+          const s = String(next || "recording");
+          state = s;
+          // Use dataset class list so CSS selectors match
+          capsule.classList.remove("recording", "transcribing", "processing", "hiding");
+          capsule.classList.add(s);
+          if (s === "hiding") {
+            // Fade, then ask Tauri to actually hide the window
+            setTimeout(function () {
+              try {
+                if (window.__TAURI_INTERNALS__) {
+                  window.__TAURI_INTERNALS__.invoke("hide_overlay").catch(function () {});
+                }
+              } catch (_) {}
+            }, 220);
+          }
+        };
+
+        window.setLevels = function (levels) {
+          if (!Array.isArray(levels)) return;
+          latestLevels = levels;
+          // track "loudness" for quiet-fade logic
+          let maxLvl = 0;
+          for (let i = 0; i < levels.length; i++) {
+            const v = Number(levels[i]) || 0;
+            if (v > maxLvl) maxLvl = v;
+          }
+          if (maxLvl > 0.04) lastLoudTs = performance.now();
+        };
+
+        // ── Cosine interpolation from 9 bands → 16 samples ─────────────────────
+        function cosLerp(a, b, t) {
+          const f = (1 - Math.cos(t * Math.PI)) * 0.5;
+          return a * (1 - f) + b * f;
+        }
+        function interpolate(levels, out) {
+          // maps i ∈ [0, SAMPLE_N-1] → src ∈ [0, INPUT_N-1]
+          for (let i = 0; i < SAMPLE_N; i++) {
+            const src = (i / (SAMPLE_N - 1)) * (INPUT_N - 1);
+            const lo = Math.floor(src);
+            const hi = Math.min(INPUT_N - 1, lo + 1);
+            out[i] = cosLerp(levels[lo] || 0, levels[hi] || 0, src - lo);
+          }
+        }
+        const interpScratch = new Float32Array(SAMPLE_N);
+
+        // ── Target update per frame ────────────────────────────────────────────
+        function updateTarget(now) {
+          const silenceMs = now - lastLoudTs;
+          const hasRecentAudio = latestLevels && silenceMs < IDLE_SILENCE_MS;
+          const quiet = !hasRecentAudio && state === "recording";
+
+          capsule.classList.toggle("quiet", quiet);
+
+          if (state === "transcribing" || state === "processing") {
+            // Uniform pulse: single sine whose amplitude itself breathes
+            const t = (now % PROC_PERIOD_MS) / PROC_PERIOD_MS; // [0,1)
+            const breath = (Math.sin(t * Math.PI * 2) + 1) * 0.5; // [0,1]
+            const ampEnvelope = PROC_AMP_MIN + breath * (PROC_AMP_MAX - PROC_AMP_MIN);
+            for (let i = 0; i < SAMPLE_N; i++) {
+              const sign = i % 2 === 0 ? 1 : -1;
+              // gentle wave along the line with the breathing amplitude
+              const wavePhase = (i / (SAMPLE_N - 1)) * Math.PI * 2 + phaseOffset[i];
+              target[i] = sign * ampEnvelope * (0.6 + 0.4 * Math.sin(wavePhase));
+            }
+            return;
+          }
+
+          if (quiet) {
+            // Idle breathing: tempo jittered per cycle
+            const elapsed = now - idleCycleStart;
+            if (elapsed >= idlePeriodMs) {
+              idleCycleStart = now;
+              idlePeriodMs = IDLE_PERIOD_MS_BASE + (Math.random() - 0.5) * 120;
+            }
+            const t = ((now - idleCycleStart) / idlePeriodMs); // [0,1)
+            for (let i = 0; i < SAMPLE_N; i++) {
+              const sign = i % 2 === 0 ? 1 : -1;
+              const phase = t * Math.PI * 2 + phaseOffset[i];
+              target[i] = sign * IDLE_AMP_PX * Math.sin(phase);
+            }
+            return;
+          }
+
+          // Listening: drive from levels + organic noise
+          interpolate(latestLevels, interpScratch);
+          for (let i = 0; i < SAMPLE_N; i++) {
+            const sign = i % 2 === 0 ? 1 : -1;
+            const lvl = interpScratch[i]; // 0..1
+            const noise = (Math.random() - 0.5) * NOISE_AMP_PX;
+            let amp = lvl * PEAK_PX + noise;
+            if (amp > PEAK_PX) amp = PEAK_PX;
+            if (amp < 0) amp = 0;
+            target[i] = sign * amp;
+          }
+        }
+
+        // ── Path render ────────────────────────────────────────────────────────
+        function buildPath() {
+          // Quadratic smoothing between successive points
+          const dx = WIDTH / (SAMPLE_N - 1);
+          let d = "M 0 " + (MID_Y + current[0]).toFixed(2);
+          for (let i = 1; i < SAMPLE_N; i++) {
+            const x = i * dx;
+            const y = MID_Y + current[i];
+            const px = (i - 1) * dx;
+            const py = MID_Y + current[i - 1];
+            const cx = (px + x) / 2;
+            const cy = (py + y) / 2;
+            d += " Q " + px.toFixed(2) + " " + py.toFixed(2) + " " + cx.toFixed(2) + " " + cy.toFixed(2);
+          }
+          // Tail segment to the last point
+          const lastX = (SAMPLE_N - 1) * dx;
+          const lastY = MID_Y + current[SAMPLE_N - 1];
+          d += " T " + lastX.toFixed(2) + " " + lastY.toFixed(2);
+          return d;
+        }
+
+        // ── RAF loop ───────────────────────────────────────────────────────────
+        let rafId = 0;
+        function tick(now) {
+          rafId = requestAnimationFrame(tick);
+          // Short-circuit when the window is hidden — avoids burning CPU
+          if (document.visibilityState === "hidden") return;
+
+          updateTarget(now);
+          // Lerp current → target
+          for (let i = 0; i < SAMPLE_N; i++) {
+            current[i] += (target[i] - current[i]) * LERP_T;
+          }
+          wavePath.setAttribute("d", buildPath());
+        }
+        rafId = requestAnimationFrame(tick);
+
+        // ── Appear + stop button ramp ──────────────────────────────────────────
+        requestAnimationFrame(function () {
+          capsule.classList.add("ready");
+        });
+
+        stopBtn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          // Double-check pointer-events (CSS already blocks pre-ready, this is belt+suspenders)
+          if (!capsule.classList.contains("ready")) return;
+          if (state === "transcribing" || state === "processing" || state === "hiding") return;
+          try {
+            if (window.__TAURI_INTERNALS__) {
+              window.__TAURI_INTERNALS__.invoke("request_stop_from_overlay").catch(function () {});
+            }
+          } catch (_) {}
+        });
+
+        // ── Handshake with Rust side (replays cached state/levels) ─────────────
+        try {
+          if (window.__TAURI_INTERNALS__) {
+            window.__TAURI_INTERNALS__.invoke("overlay_ready").catch(function () {});
+          }
+        } catch (_) {}
+      })();
+    </script>
+  </body>
+</html>

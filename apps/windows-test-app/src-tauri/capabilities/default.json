@@ -1,0 +1,20 @@
+{
+  "identifier": "default",
+  "description": "Default capability for Spokn",
+  "windows": ["main", "overlay"],
+  "permissions": [
+    "core:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister-all",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/spokn-backend",
+          "sidecar": true,
+          "args": [{ "validator": "^--port=\\d+$" }]
+        }
+      ]
+    }
+  ]
+}

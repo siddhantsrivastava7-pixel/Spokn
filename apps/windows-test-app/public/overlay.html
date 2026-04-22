@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      padding: 0 8px;
+      background: rgba(0, 0, 0, 0.85);
+      border-radius: 18px;
+    }
+
+    /* Left: mic icon or spinner */
+    .icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+    }
+
+    .mic-icon {
+      display: flex;
+    }
+
+    .spin-icon {
+      display: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255,255,255,0.15);
+      border-top-color: rgba(255,255,255,0.75);
+      animation: spin 0.75s linear infinite;
+    }
+
+    .overlay.transcribing .mic-icon { display: none; }
+    .overlay.transcribing .spin-icon { display: block; }
+
+    /* Middle: bars or transcribing text */
+    .middle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .bars {
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 3px;
+      height: 20px;
+      overflow: hidden;
+    }
+
+    .bar {
+      width: 3px;
+      background: #ffe5ee;
+      border-radius: 2px;
+      min-height: 3px;
+      max-height: 20px;
+      transition: height 60ms ease-out, opacity 120ms ease-out;
+    }
+
+    .transcribing-text {
+      color: rgba(255,255,255,0.85);
+      font-size: 11px;
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      animation: pulse 1.5s ease-in-out infinite;
+      display: none;
+    }
+
+    .overlay.transcribing .bars { display: none; }
+    .overlay.transcribing .transcribing-text { display: block; }
+
+    /* Right: empty for layout balance */
+    .right { width: 8px; }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.6; }
+      50%       { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay recording" id="overlay">
+    <div class="icon">
+      <svg class="mic-icon" width="12" height="14" viewBox="0 0 12 14" fill="none">
+        <rect x="3.5" y="0.5" width="5" height="8" rx="2.5" fill="white" opacity="0.85"/>
+        <path d="M1 6.5C1 9.26 3.24 11.5 6 11.5C8.76 11.5 11 9.26 11 6.5" stroke="white" stroke-opacity="0.85" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="6" y1="11.5" x2="6" y2="13.5" stroke="white" stroke-opacity="0.85" stroke-width="1.2" stroke-linecap="round"/>
+        <line x1="3.5" y1="13.5" x2="8.5" y2="13.5" stroke="white" stroke-opacity="0.85" stroke-width="1.2" stroke-linecap="round"/>
+      </svg>
+      <div class="spin-icon"></div>
+    </div>
+
+    <div class="middle">
+      <div class="bars" id="bars">
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+        <div class="bar" style="height:3px"></div>
+      </div>
+      <div class="transcribing-text">Transcribing…</div>
+    </div>
+
+    <div class="right"></div>
+  </div>
+
+  <script>
+    const overlay = document.getElementById('overlay');
+    const bars    = Array.from(document.querySelectorAll('.bar'));
+
+    // Show with fade-in shortly after load.
+    // setTimeout is used instead of requestAnimationFrame because WebView2 may
+    // not fire RAF callbacks in windows created with focused(false).
+    setTimeout(function() { overlay.classList.add('visible'); }, 0);
+
+    // Called by Rust eval when recording starts/stops
+    window.setState = function(s) {
+      overlay.className = 'overlay visible ' + s;
+    };
+
+    // Called by Rust eval every ~50ms with 9 normalised levels (0–1)
+    window.setLevels = function(levels) {
+      bars.forEach(function(bar, i) {
+        var v  = Math.min(1, Math.max(0, levels[i] || 0));
+        var h  = Math.min(20, Math.round(4 + Math.pow(v, 0.7) * 16));
+        var op = Math.max(0.2, Math.min(1, v * 1.7));
+        bar.style.height  = h + 'px';
+        bar.style.opacity = op;
+      });
+    };
+
+    // Signal Rust that this page's script context is ready to receive commands.
+    // overlay_ready reads the cached last_state / last_levels and flushes them.
+    try {
+      if (window.__TAURI_INTERNALS__) {
+        window.__TAURI_INTERNALS__.invoke('overlay_ready').catch(function() {});
+      }
+    } catch (_) {}
+  </script>
+</body>
+</html>

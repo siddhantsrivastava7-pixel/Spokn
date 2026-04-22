@@ -1,0 +1,42 @@
+{
+  "productName": "Spokn",
+  "version": "0.1.0",
+  "identifier": "app.spokn.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev:ui",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:prerelease",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Spokn",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Siddhant Srivastava",
+    "copyright": "Copyright © 2026 Siddhant Srivastava",
+    "shortDescription": "Offline speech-to-text for Windows",
+    "longDescription": "Spokn is a private, offline speech-to-text app for Windows. All transcription runs locally — no audio ever leaves your machine.",
+    "category": "Productivity",
+    "externalBin": ["binaries/spokn-backend"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  }
+}

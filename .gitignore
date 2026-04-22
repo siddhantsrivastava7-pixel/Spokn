@@ -1,0 +1,62 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Rust / Tauri
+target/
+**/src-tauri/target/
+**/src-tauri/gen/schemas/
+
+# Sidecar / compiled backend binaries (keep directory; ignore contents)
+apps/*/src-tauri/binaries/*
+!apps/*/src-tauri/binaries/.gitkeep
+spokn-backend*.exe
+spokn-backend
+
+# Local app data / cached models (never commit models)
+*.gguf
+*.bin
+models/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Claude Code local settings (user-specific, never committed)
+.claude/settings.local.json
+
+# Logs
+logs/
+*.log
+
+# Temp (includes tmp-handy reference clone, kept local only)
+tmp/
+tmp-*/
+*.tmp
+
+# Test output
+coverage/
+.nyc_output/
