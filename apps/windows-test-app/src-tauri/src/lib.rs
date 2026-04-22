@@ -28,7 +28,11 @@ async fn get_backend_port(
         if let Some(p) = *port.0.lock().unwrap() {
             return Ok(p);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tauri::async_runtime::spawn_blocking(|| {
+            std::thread::sleep(Duration::from_millis(100));
+        })
+        .await
+        .ok();
     }
     Err("Backend did not report a port in time".into())
 }
