@@ -32,7 +32,7 @@ function getApiBase(): Promise<string> {
   return _apiBasePromise;
 }
 
-async function apiUrl(path: string): Promise<string> {
+export async function apiUrl(path: string): Promise<string> {
   const base = await getApiBase();
   return `${base}${path}`;
 }

@@ -12,6 +12,13 @@ interface Props {
   result: TranscribeResult | null;
   mode: Mode;
   langs: string[];
+  /** Flow Mode's canonical session buffer — what has been committed to the
+   *  target app across the current Flow session. Shown here (not in the
+   *  main Workspace) since Flow's product is the text typed externally. */
+  flowBufferText?: string;
+  /** True when Flow is active — used to distinguish "empty because idle"
+   *  from "empty because Flow hasn't started". */
+  flowActive?: boolean;
 }
 
 function intentLabel(intent: IntentDetection["intent"]): string {
@@ -39,7 +46,7 @@ function transformationLabel(level: TransformationLevel | undefined): string {
   return "high — templates applied";
 }
 
-export function DebugPanel({ open, result, mode, langs }: Props) {
+export function DebugPanel({ open, result, mode, langs, flowBufferText, flowActive }: Props) {
   const routing = result?.routing;
   const transcript = result?.transcript;
   const intent = transcript?.detectedIntent;
@@ -60,6 +67,38 @@ export function DebugPanel({ open, result, mode, langs }: Props) {
           </div>
         </div>
         <div className="debug-body">
+          {/* Flow session buffer — the canonical record of what has been
+              committed to the target app across the current Flow session.
+              Previously mirrored in the main Workspace; moved here since
+              Flow's product is the text typed externally, not an in-app view. */}
+          <details className="dbg-group" open={flowActive === true && !!flowBufferText}>
+            <summary className="dbg-label" style={{ cursor: "pointer", userSelect: "none" }}>
+              Flow session buffer {flowActive ? "· live" : "· idle"}
+            </summary>
+            <div
+              style={{
+                marginTop: 8,
+                padding: "10px 12px",
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-sm)",
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                maxHeight: 180,
+                overflowY: "auto",
+                color: flowBufferText ? "var(--text-2)" : "var(--text-4)",
+              }}
+            >
+              {flowBufferText && flowBufferText.trim().length > 0
+                ? flowBufferText
+                : flowActive
+                  ? "(waiting for first commit)"
+                  : "(Flow not active)"}
+            </div>
+          </details>
+
           <div className="dbg-group">
             <div className="dbg-label">Output</div>
             <div className="dbg-kv">

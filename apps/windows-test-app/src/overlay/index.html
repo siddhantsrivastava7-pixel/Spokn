@@ -73,6 +73,61 @@
         pointer-events: none;
       }
 
+      /* Nack — "heard, but nothing applied". Quick desaturate pulse.
+         No shape change, no new icons. Reverts to prior state via JS. */
+      @keyframes nackPulse {
+        0%   { filter: saturate(1) brightness(1);     box-shadow:
+                 inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px rgba(0, 0, 0, 0.32); }
+        50%  { filter: saturate(0.4) brightness(0.85); box-shadow:
+                 inset 0 0 0 1px rgba(255, 180, 100, 0.18),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px rgba(0, 0, 0, 0.32); }
+        100% { filter: saturate(1) brightness(1);     box-shadow:
+                 inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px rgba(0, 0, 0, 0.32); }
+      }
+      .capsule.nack {
+        animation: nackPulse 400ms ease-out;
+      }
+
+      /* SendOk — "voice send fired successfully". Positive green/cyan pulse.
+         Clearly distinct from nack so an earphone-first user can feel the
+         difference peripherally. Reverts to prior state via JS. */
+      @keyframes sendOkPulse {
+        0%   { filter: saturate(1) brightness(1);    box-shadow:
+                 inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px rgba(0, 0, 0, 0.32); }
+        30%  { filter: saturate(1.2) brightness(1.15); box-shadow:
+                 inset 0 0 0 1px rgba(90, 230, 170, 0.45),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 28px rgba(60, 200, 150, 0.22); }
+        100% { filter: saturate(1) brightness(1);    box-shadow:
+                 inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+                 0 1px 2px rgba(0, 0, 0, 0.4),
+                 0 8px 24px rgba(0, 0, 0, 0.32); }
+      }
+      .capsule.send-ok {
+        animation: sendOkPulse 500ms ease-out;
+      }
+
+      /* Blocked — permission (Accessibility on macOS) is denied, so no
+         injection is happening. Persistent amber inner-ring + dim fill so
+         the user can distinguish "Flow running normally" from "Flow is
+         blocked" at a glance without looking away from whatever app they're
+         in. Intentionally no animation — the state persists until the user
+         grants permission, so a pulse would feel frantic. */
+      .capsule.blocked {
+        filter: saturate(0.55) brightness(0.88);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 170, 90, 0.5),
+          0 1px 2px rgba(0, 0, 0, 0.4),
+          0 8px 24px rgba(0, 0, 0, 0.32);
+      }
+
       /* ── Regions ───────────────────────────────────────────────────────────── */
       .slot {
         width: 20px;
@@ -233,9 +288,29 @@
         // ── Public JS contract (called from Rust via .eval) ────────────────────
         window.setState = function (next) {
           const s = String(next || "recording");
+          // Nack is a transient overlay — pulse the class on, then let the
+          // Flow side (App.tsx) restore the prior state. Don't change `state`
+          // or strip the underlying class so the waveform keeps animating.
+          if (s === "nack") {
+            capsule.classList.remove("nack");
+            // Force reflow so the animation restarts even on rapid nacks
+            void capsule.offsetWidth;
+            capsule.classList.add("nack");
+            setTimeout(function () { capsule.classList.remove("nack"); }, 420);
+            return;
+          }
+          if (s === "send_ok") {
+            // Positive confirmation pulse — distinct from nack so the user
+            // can feel the difference even without looking (earphone-first).
+            // Transient overlay: doesn't change underlying state.
+            capsule.classList.remove("send-ok");
+            void capsule.offsetWidth;
+            capsule.classList.add("send-ok");
+            setTimeout(function () { capsule.classList.remove("send-ok"); }, 520);
+            return;
+          }
           state = s;
-          // Use dataset class list so CSS selectors match
-          capsule.classList.remove("recording", "transcribing", "processing", "hiding");
+          capsule.classList.remove("recording", "transcribing", "processing", "hiding", "quiet", "blocked");
           capsule.classList.add(s);
           if (s === "hiding") {
             // Fade, then ask Tauri to actually hide the window

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Minimum entitlements for Spokn on macOS.
+
+      Microphone is the only device entitlement Spokn currently needs at
+      launch. Accessibility (text injection) and Input Monitoring (typing
+      guard) are NOT entitlements — they are TCC permissions the user
+      grants in System Settings → Privacy; no plist key is required for
+      the app to request them at runtime.
+
+      Do NOT broaden this file with shortcut entitlements like
+      cs.allow-unsigned-executable-memory or cs.disable-library-validation
+      as workarounds — they break notarization.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>

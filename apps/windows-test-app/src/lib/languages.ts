@@ -92,3 +92,27 @@ export function toWhisperLang(codes: string[]): string {
   if (real.length === 1) return real[0]!;
   return "auto";
 }
+
+/**
+ * Expand the user's selected language codes to the set of Whisper-reportable
+ * codes they'd expect in output. Used as the allowlist for post-transcription
+ * filtering in Flow Mode's validation layer.
+ *
+ * Returns an empty array when the selection includes "auto" or "multilingual" —
+ * those explicit "any language" opt-ins disable the allowlist entirely.
+ * "hinglish" expands to both "en" and "hi" because Whisper has no hinglish code
+ * and returns one of the two for real Hinglish audio.
+ */
+export function expandToWhisperLangs(codes: string[]): string[] {
+  if (codes.some((c) => c === "auto" || c === "multilingual")) return [];
+  const out = new Set<string>();
+  for (const c of codes) {
+    if (c === "hinglish") {
+      out.add("en");
+      out.add("hi");
+    } else if (c) {
+      out.add(c);
+    }
+  }
+  return Array.from(out);
+}

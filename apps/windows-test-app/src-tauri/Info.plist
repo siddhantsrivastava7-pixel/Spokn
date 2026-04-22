@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Supplemental Info.plist keys merged into Spokn's generated bundle
+      Info.plist on macOS. Tauri 2 generates the base Info.plist from
+      tauri.conf.json (CFBundleIdentifier, version, etc.); this file adds
+      the usage-description strings that macOS shows when Spokn first
+      requests a protected capability.
+
+      Privacy copy should always lead with "locally" or "on your device"
+      so the user sees Spokn's local-first posture in the TCC prompt.
+    -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Spokn captures microphone audio locally to transcribe your speech. No audio leaves your device.</string>
+
+    <!--
+      Activated by AX calls (read focused text, read focused window title).
+      macOS shows this string once, the first time the app tries to read an
+      AX attribute. Without it the TCC prompt falls back to a generic
+      "access accessibility features" wording.
+    -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Spokn reads the focused text field and foreground app locally to keep Flow Mode accurate. It never sends this information off your device.</string>
+</dict>
+</plist>

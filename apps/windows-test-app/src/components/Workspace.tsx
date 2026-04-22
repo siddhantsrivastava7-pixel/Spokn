@@ -37,6 +37,10 @@ interface Props {
   injectMode?: "auto" | "review";
   /** Manually inject the current typingText (bypasses debounce). */
   onTypeNow?: () => void;
+  /** Flow Mode's canonical session buffer — rendered in the Debug panel only. */
+  flowBufferText?: string;
+  /** True when Flow Mode is actively listening. */
+  flowActive?: boolean;
 }
 
 const INTEL_MESSAGES = [
@@ -150,6 +154,7 @@ export function Workspace({
   snippets,
   onRecord, onUploadClick, onVocabUpdated, onTypingTextChange,
   injectMode = "auto", onTypeNow,
+  flowBufferText, flowActive,
 }: Props) {
   const [debugOpen, setDebugOpen] = useState(false);
   const [intelIdx, setIntelIdx] = useState(0);
@@ -406,208 +411,71 @@ export function Workspace({
           )}
 
           {appState === "done" && result && (
-            <div className="transcript-wrap" ref={scrollRef}>
-              <div className="transcript">
-                {result.routing && (
-                  <div className="intel-banner">
-                    <span className="intel-dot" />
-                    <span className="intel-text">
-                      {result.routing.resolvedMode.reason ?? `Routed to ${result.routing.selectedModel.id}`}
-                    </span>
+            <div className="transcript-wrap">
+              <div className="transcript" style={{ maxWidth: 720 }}>
+                {/* Minimal post-transcription UI. Flow Mode is the primary
+                    product — paste lands in the focused external app, not
+                    here. One-shot users still get a compact editable area
+                    so correction learning stays intact; everything else
+                    (segments, raw/formatted toggle, detailed metadata)
+                    lives in the Debug panel. */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-4)" }}>
+                    {editedText.trim().split(/\s+/).filter(Boolean).length} words · {result.transcript.language.toUpperCase()}
+                    {injectMode === "auto" ? " · typed into focused window" : " · click \"Type now\" to inject"}
+                  </span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {onTypeNow && (
+                      <button
+                        className="ibtn-ghost"
+                        onClick={onTypeNow}
+                        style={{ padding: "4px 10px", fontSize: 11 }}
+                        title="Type this text into the previously focused window"
+                      >
+                        Type now
+                      </button>
+                    )}
+                    {isDirty && (
+                      <button className="transcript-save-btn" onClick={saveCorrections}>
+                        {savedConfirm ? "✓ Saved" : "Save corrections"}
+                      </button>
+                    )}
                   </div>
-                )}
-
-                <div className="transcript-meta">
-                  <span>Recording</span>
-                  <span className="dot" />
-                  <span>{new Date(result.transcript.createdAt).toLocaleTimeString()}</span>
-                  <span className="dot" />
-                  <span>{formatDuration(result.transcript.durationMs)}</span>
-                  <span className="dot" />
-                  <span>{result.transcript.language.toUpperCase()}</span>
-                  {result.transcript.detectedIntent && result.transcript.detectedIntent.intent !== "paragraph" && (
-                    <>
-                      <span className="dot" />
-                      <span title={`Intent confidence ${(result.transcript.detectedIntent.confidence * 100).toFixed(0)}%`}>
-                        {formatIntentLabel(result.transcript.detectedIntent.intent)}
-                      </span>
-                    </>
-                  )}
-                  {result.transcript.transformationLevel && (
-                    <>
-                      <span className="dot" />
-                      <span title="How much the output diverges from the raw transcript">
-                        {formatTransformationLabel(result.transcript.transformationLevel)}
-                      </span>
-                    </>
-                  )}
-                  {result.transcript.metadata?.hinglishApplied === true && (
-                    <>
-                      <span className="dot" />
-                      <span>Hinglish detected</span>
-                    </>
-                  )}
-                  {result.transcript.fallbackUsed && (
-                    <>
-                      <span className="dot" />
-                      <span style={{ color: "var(--danger)" }}>
-                        Fallback: {result.transcript.fallbackStage ?? "unknown"}
-                      </span>
-                    </>
-                  )}
                 </div>
-                <div className="transcript-title">Untitled recording</div>
-                <div className="transcript-sub">
-                  {result.transcript.segments.length} segment{result.transcript.segments.length !== 1 ? "s" : ""} · processed in {(result.processingTimeMs / 1000).toFixed(2)}s
-                </div>
-
-                {hasFormatted && (
-                  <div className="view-toggle" style={{ display: "flex", gap: 6, marginTop: 12, marginBottom: 8 }}>
-                    <button
-                      className={`ibtn-ghost ${view === "raw" ? "active" : ""}`}
-                      onClick={() => setView("raw")}
-                      style={{ padding: "4px 10px", fontSize: 11 }}
-                    >
-                      Raw
-                    </button>
-                    <button
-                      className={`ibtn-ghost ${view === "formatted" ? "active" : ""}`}
-                      onClick={() => setView("formatted")}
-                      style={{ padding: "4px 10px", fontSize: 11 }}
-                    >
-                      Formatted
-                    </button>
-                  </div>
-                )}
-
-                {view === "formatted" && result.transcript.formattedOutput && (
-                  <>
-                    <div
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.12em",
-                        color: "var(--text-4)",
-                        marginTop: 10,
-                      }}
-                    >
-                      Preview only · not typed into external apps
-                    </div>
-                    <pre
-                      className="formatted-output"
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        fontFamily: "var(--font-sans)",
-                        fontSize: 15,
-                        lineHeight: 1.6,
-                        padding: "14px 16px",
-                        background: "var(--surface-2)",
-                        border: "1px solid var(--border)",
-                        borderRadius: "var(--r-md)",
-                        margin: "6px 0 12px",
-                      }}
-                    >
-                      {result.transcript.formattedOutput}
-                    </pre>
-                  </>
-                )}
-
-                {view === "raw" && (
-                  isDirty ? (
-                    <div className="segment">
-                      <div className="segment-time" style={{ opacity: showTimestamps ? undefined : 0 }}>
-                        {segments[0] ? formatMs(segments[0].startMs) : "00:00"}
-                      </div>
-                      <div className="segment-text">
-                        <HighlightText text={editedText} />
-                      </div>
-                    </div>
-                  ) : segments.map((s, i) => {
-                    const visible = revealState[i] ?? 0;
-                    if (visible === 0) return null;
-                    return (
-                      <SegmentView
-                        key={i}
-                        seg={s}
-                        allText={result.transcript.rawText}
-                        visibleChunks={visible}
-                        showTimestamps={showTimestamps}
-                        isCurrent={i === lastVisibleIdx && visible < chunkify(s.text).length}
-                      />
-                    );
-                  })
-                )}
-
-                {anyVisible && transcriptFullyRevealed && (
-                  <>
-                    <div className="transcript-done">
-                      <span className="transcript-done-check">✓</span>
-                      <span>
-                        transcript complete · {(editedText || result.transcript.correctedText).trim().split(/\s+/).filter(Boolean).length} words
-                      </span>
-                    </div>
-
-                    {/* Editable correction area — this textarea is the canonical
-                        typingText. Whatever it contains is what gets injected
-                        into the focused external app. */}
-                    <div style={{ marginTop: 32 }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
-                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--text-4)" }}>
-                          {injectMode === "auto"
-                            ? "Typing into focused window · edits pause auto-type"
-                            : "Review before typing · click \"Type now\" when ready"}
-                        </span>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          {onTypeNow && (
-                            <button
-                              className="ibtn-ghost"
-                              onClick={onTypeNow}
-                              style={{ padding: "4px 10px", fontSize: 11 }}
-                              title="Type this text into the previously focused window"
-                            >
-                              Type now
-                            </button>
-                          )}
-                          {isDirty && (
-                            <button
-                              className="transcript-save-btn"
-                              onClick={saveCorrections}
-                            >
-                              {savedConfirm ? "✓ Saved" : "Save corrections"}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <textarea
-                        className="transcript-editable"
-                        value={editedText}
-                        onChange={(e) => setEditedText(e.target.value)}
-                        rows={Math.max(4, Math.ceil(editedText.length / 80))}
-                        spellCheck={false}
-                        placeholder="Transcript text…"
-                        style={{
-                          border: isDirty ? "1px solid var(--accent-border)" : "1px solid var(--border)",
-                          borderRadius: "var(--r-md)",
-                          padding: "14px 16px",
-                          background: isDirty ? "var(--accent-soft)" : "var(--surface-2)",
-                          transition: "all 200ms var(--ease)",
-                        }}
-                      />
-                      {!isDirty && (
-                        <p className="transcript-edit-hint">
-                          Click above to edit — corrected words are learned for future sessions.
-                        </p>
-                      )}
-                    </div>
-                  </>
+                <textarea
+                  className="transcript-editable"
+                  value={editedText}
+                  onChange={(e) => setEditedText(e.target.value)}
+                  rows={Math.max(3, Math.ceil(editedText.length / 80))}
+                  spellCheck={false}
+                  placeholder="Transcript text…"
+                  style={{
+                    border: isDirty ? "1px solid var(--accent-border)" : "1px solid var(--border)",
+                    borderRadius: "var(--r-md)",
+                    padding: "14px 16px",
+                    background: isDirty ? "var(--accent-soft)" : "var(--surface-2)",
+                    transition: "all 200ms var(--ease)",
+                    width: "100%",
+                  }}
+                />
+                {!isDirty && (
+                  <p className="transcript-edit-hint" style={{ marginTop: 6 }}>
+                    Edit here to correct words — they are learned for future sessions. Full transcript details are in the Debug panel.
+                  </p>
                 )}
               </div>
             </div>
           )}
         </div>
 
-        <DebugPanel open={debugOpen} result={result} mode={mode} langs={langs} />
+        <DebugPanel
+          open={debugOpen}
+          result={result}
+          mode={mode}
+          langs={langs}
+          flowBufferText={flowBufferText}
+          flowActive={flowActive}
+        />
       </div>
     </div>
   );

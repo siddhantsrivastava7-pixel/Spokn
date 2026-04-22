@@ -74,12 +74,11 @@ describe("buildWhisperArgs", () => {
   });
 
   describe("decodingHints", () => {
-    it("base request has no accuracy flags", () => {
+    it("base request has no beam/best-of/temperature flags", () => {
       const args = buildWhisperArgs(base);
       expect(args).not.toContain("--beam-size");
       expect(args).not.toContain("--best-of");
       expect(args).not.toContain("--temperature");
-      expect(args).not.toContain("--entropy-thold");
     });
 
     it("highAccuracy applies preset (beam 5, best-of 5, temp 0, thresholds)", () => {
@@ -117,7 +116,75 @@ describe("buildWhisperArgs", () => {
       });
       const beam = args.indexOf("--beam-size");
       expect(args[beam + 1]).toBe("3");
-      expect(args).not.toContain("--entropy-thold");
+    });
+  });
+
+  describe("anti-hallucination thresholds (always-on)", () => {
+    it("baseline includes all three threshold flags", () => {
+      const args = buildWhisperArgs(base);
+      const nsIdx = args.indexOf("--no-speech-thold");
+      expect(nsIdx).toBeGreaterThan(-1);
+      expect(args[nsIdx + 1]).toBe("0.6");
+      const lpIdx = args.indexOf("--logprob-thold");
+      expect(lpIdx).toBeGreaterThan(-1);
+      expect(args[lpIdx + 1]).toBe("-1.0");
+      const enIdx = args.indexOf("--entropy-thold");
+      expect(enIdx).toBeGreaterThan(-1);
+      expect(args[enIdx + 1]).toBe("2.4");
+    });
+
+    it("baseline request has no duplicate threshold flags", () => {
+      const args = buildWhisperArgs(base);
+      for (const flag of ["--no-speech-thold", "--logprob-thold", "--entropy-thold"]) {
+        expect(args.filter((a) => a === flag).length).toBe(1);
+      }
+    });
+
+    it("highAccuracy request has no duplicate threshold flags", () => {
+      const args = buildWhisperArgs({
+        ...base,
+        decodingHints: { highAccuracy: true },
+      });
+      for (const flag of ["--logprob-thold", "--entropy-thold"]) {
+        expect(args.filter((a) => a === flag).length).toBe(1);
+      }
+    });
+
+    it("highAccuracy wins over baseline (last-occurrence preserved)", () => {
+      // If highAccuracy emits a different value for --entropy-thold than the
+      // baseline, dedupe must keep the highAccuracy (later) one. Today the
+      // values happen to match; this test pins the last-wins behavior so
+      // future divergence is safe.
+      const args = buildWhisperArgs({
+        ...base,
+        decodingHints: { highAccuracy: true },
+      });
+      const enIdx = args.indexOf("--entropy-thold");
+      // The sole remaining --entropy-thold is the one emitted by
+      // appendDecodingHints (the later one), with value "2.4".
+      expect(args[enIdx + 1]).toBe("2.4");
+    });
+
+    it("dedupe preserves relative order of non-threshold flags", () => {
+      // Build the full arg set and record positions of flags NOT touched by
+      // dedupe. Their order relative to each other must match the intended
+      // build order: -f, -m, -oj, --output-file, --no-prints, -l, then the
+      // decoding-hint flags (--beam-size, --best-of, --temperature).
+      const args = buildWhisperArgs({
+        ...base,
+        decodingHints: { highAccuracy: true, beamSize: 5, bestOf: 5, temperature: 0 },
+      });
+      const nonThreshold = [
+        "-f", "-m", "-oj", "--output-file", "--no-prints",
+        "-l", "--beam-size", "--best-of", "--temperature",
+      ];
+      const positions = nonThreshold.map((f) => args.indexOf(f));
+      // Every expected flag present
+      for (const p of positions) expect(p).toBeGreaterThan(-1);
+      // Order strictly increasing
+      for (let i = 1; i < positions.length; i++) {
+        expect(positions[i]).toBeGreaterThan(positions[i - 1]!);
+      }
     });
   });
 });

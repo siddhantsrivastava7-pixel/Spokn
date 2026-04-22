@@ -4,8 +4,10 @@ import { SpoknMark } from "./SpoknMark";
 import { LanguagePicker } from "./LanguagePicker";
 import type { AppState } from "../App";
 import type { Snippet } from "../lib/snippets";
+import type { FlowContext } from "../lib/flowToneMapping";
 
 export type Mode = "Auto" | "Fast" | "Balanced" | "Best";
+export type FlowContextChoice = "auto" | FlowContext;
 
 interface Props {
   mode: Mode;
@@ -27,6 +29,12 @@ interface Props {
   onAddSnippet: (trigger: string, value: string) => void;
   onRemoveSnippet: (id: string) => void;
   shortcuts?: Record<string, string>;
+  // ── Flow Mode ──────────────────────────────────────────────────────────
+  flowActive: boolean;
+  flowContext: FlowContextChoice;
+  flowResolvedContext: FlowContext;
+  onFlowToggle: () => void;
+  onFlowContextChange: (c: FlowContextChoice) => void;
 }
 
 const MODES: Mode[] = ["Auto", "Fast", "Balanced", "Best"];
@@ -38,6 +46,8 @@ export function LeftPanel({
   onRecord, onUpload, onTranscribe, onManageModels,
   onClearVocab, onAddSnippet, onRemoveSnippet,
   shortcuts = {},
+  flowActive, flowContext, flowResolvedContext,
+  onFlowToggle, onFlowContextChange,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const isRecording = appState === "recording";
@@ -112,6 +122,40 @@ export function LeftPanel({
           style={{ display: "none" }}
           onChange={handleFileChange}
         />
+      </div>
+
+      {/* Flow Mode */}
+      <div className="lp-section">
+        <div className="lp-label">
+          <ISpark size={10} weight={2} /> <span>Flow</span>
+        </div>
+        <button
+          className={`record-cta ${flowActive ? "recording" : ""}`}
+          onClick={onFlowToggle}
+          disabled={appState === "recording" || appState === "processing"}
+          title="Continuous listening with auto-commit and inline correction"
+        >
+          <span className="record-cta-left">
+            {flowActive ? <IStop size={15} weight={2.2} /> : <ISpark size={15} weight={2} />}
+            <span>{flowActive ? "Stop Flow" : "Start Flow"}</span>
+          </span>
+          <span className="record-cta-kbd"><kbd>{shortcuts.flow ?? "Ctrl+Shift+F"}</kbd></span>
+        </button>
+        <div className="seg" role="tablist" style={{ marginTop: 8 }}>
+          {(["auto", "chat", "email", "notes"] as const).map((c) => (
+            <button
+              key={c}
+              className={flowContext === c ? "active" : ""}
+              onClick={() => onFlowContextChange(c)}
+              role="tab"
+              aria-selected={flowContext === c}
+              style={{ fontSize: 10, textTransform: "capitalize" }}
+              title={c === "auto" ? `Auto · ${flowResolvedContext}` : undefined}
+            >
+              {c === "auto" && flowActive ? `auto · ${flowResolvedContext}` : c}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Engine */}

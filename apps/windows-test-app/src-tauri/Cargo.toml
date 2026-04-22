@@ -20,3 +20,31 @@ arboard = "3"
 enigo = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_LibraryLoader",
+] }
+# Read-only UI Automation for capturing external edits. Pure Windows COM
+# wrapper — no additional runtime. Used only by read_focused_text.
+uiautomation = "0.15"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS native bridges. Unused by Stage 1 stubs; wired in by later stages:
+#   - Stage 6 (active window): objc2-app-kit (NSWorkspace, NSRunningApplication),
+#     core-foundation (CFString), plus AX via core-graphics/objc2 bindings.
+#   - Stage 7 (typing guard):  core-graphics (CGEventTap, CGEventMask) +
+#     core-foundation (CFRunLoop).
+#   - Stage 8 (focused text):  AX via objc2 + core-foundation.
+#
+# Pinned to minor versions known-good as of 2026-04; revisit when bumping.
+core-foundation = "0.10"
+core-graphics = "0.24"
+objc2 = "0.5"
+objc2-app-kit = "0.2"
+objc2-foundation = "0.2"

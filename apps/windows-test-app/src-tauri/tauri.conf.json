@@ -25,18 +25,24 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["app", "dmg", "nsis"],
     "publisher": "Siddhant Srivastava",
     "copyright": "Copyright © 2026 Siddhant Srivastava",
-    "shortDescription": "Offline speech-to-text for Windows",
-    "longDescription": "Spokn is a private, offline speech-to-text app for Windows. All transcription runs locally — no audio ever leaves your machine.",
+    "shortDescription": "Offline speech-to-text",
+    "longDescription": "Spokn is a private, offline speech-to-text app. All transcription runs locally — no audio ever leaves your machine.",
     "category": "Productivity",
     "externalBin": ["binaries/spokn-backend"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.png",
-      "icons/icon.ico"
-    ]
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "entitlements": "entitlements.plist",
+      "frameworks": []
+    }
   }
 }

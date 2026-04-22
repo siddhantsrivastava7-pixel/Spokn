@@ -8,7 +8,8 @@
   "scripts": {
     "build:core": "npm run build --workspace=packages/stt-core",
     "build:adapter": "npm run build --workspace=packages/stt-platform-windows",
-    "build:packages": "npm run build:core && npm run build:adapter",
+    "build:adapter:macos": "npm run build --workspace=packages/stt-platform-macos",
+    "build:packages": "npm run build:core && npm run build:adapter && npm run build:adapter:macos",
     "build:installer": "npm run build:packages && npm --workspace=apps/windows-test-app exec -- tauri build",
     "dev:app": "npm run dev --workspace=apps/windows-test-app",
     "dev": "npm run build:packages && npm run dev:app",

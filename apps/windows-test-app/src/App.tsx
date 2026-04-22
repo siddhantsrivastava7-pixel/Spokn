@@ -8,13 +8,18 @@ import { useRecording } from "./hooks/useRecording";
 import { useMicDevices } from "./hooks/useMicDevices";
 import { useTranscription } from "./hooks/useTranscription";
 import { useLogs } from "./hooks/useLogs";
+import { useFlowMode } from "./hooks/useFlowMode";
+import { useAccessibilityPermission } from "./hooks/useAccessibilityPermission";
 import { fetchHealth } from "./lib/api";
 import { buildPrompt, getLearnedVocab, clearLearnedVocab } from "./lib/learnedVocab";
 import { getSnippets, addSnippet, removeSnippet } from "./lib/snippets";
 import { toWhisperLang } from "./lib/languages";
+import { inferContext } from "./lib/flowAutoContext";
+import { flowLog } from "./lib/flowObservability";
 import type { Snippet } from "./lib/snippets";
 import type { DeviceInfo } from "./lib/types";
-import type { Mode } from "./components/LeftPanel";
+import type { Mode, FlowContextChoice } from "./components/LeftPanel";
+import type { FlowContext } from "./lib/flowToneMapping";
 import type { WaveformVariant } from "./components/Waveform";
 
 const isTauri = "__TAURI_INTERNALS__" in window;
@@ -23,13 +28,14 @@ export type AppState = "idle" | "recording" | "processing" | "done" | "error";
 
 const ACCENT_COLORS = ["violet", "blue", "cyan", "amber", "neutral"] as const;
 type Accent = typeof ACCENT_COLORS[number];
-type ShortcutId = "record" | "upload" | "transcribe" | "clear";
+type ShortcutId = "record" | "upload" | "transcribe" | "clear" | "flow";
 
 const DEFAULT_SHORTCUTS: Record<ShortcutId, string> = {
   record: "Ctrl+Shift+R",
   upload: "Ctrl+Shift+U",
   transcribe: "Ctrl+Enter",
   clear: "Ctrl+Backspace",
+  flow: "Ctrl+Shift+F",
 };
 
 const SHORTCUT_LABELS: Record<ShortcutId, string> = {
@@ -37,6 +43,7 @@ const SHORTCUT_LABELS: Record<ShortcutId, string> = {
   upload: "Upload file",
   transcribe: "Transcribe",
   clear: "Clear",
+  flow: "Flow Mode",
 };
 
 function normalizeShortcutValue(shortcut: string): string {
@@ -49,6 +56,7 @@ function normalizeShortcutMap(shortcuts: Record<ShortcutId, string>): Record<Sho
     upload: normalizeShortcutValue(shortcuts.upload),
     transcribe: normalizeShortcutValue(shortcuts.transcribe),
     clear: normalizeShortcutValue(shortcuts.clear),
+    flow: normalizeShortcutValue(shortcuts.flow),
   };
 }
 
@@ -94,6 +102,106 @@ export default function App() {
   const [accent, setAccent] = useState<Accent>("violet");
   const [tweaksOpen, setTweaksOpen] = useState(false);
   const [waveformVariant, setWaveformVariant] = useState<WaveformVariant>("ripple");
+
+  // ── Flow Mode state ─────────────────────────────────────────────────────
+  const [flowContext, setFlowContext] = useState<FlowContextChoice>(() => {
+    try {
+      const v = localStorage.getItem("stt-flow-context") as FlowContextChoice | null;
+      if (v === "auto" || v === "chat" || v === "email" || v === "notes") return v;
+    } catch { /* ignore */ }
+    return "auto";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("stt-flow-context", flowContext); } catch { /* ignore */ }
+  }, [flowContext]);
+
+  // Latest active-window info, polled by useFlowMode's awareness layer.
+  // We also re-poll here so the LeftPanel can show "auto · email" before
+  // the first utterance lands.
+  const [latestWindowInfo, setLatestWindowInfo] = useState<{ processName: string; windowTitle: string; isSelf: boolean } | null>(null);
+
+  function resolveFlowContext(): FlowContext {
+    if (flowContext !== "auto") return flowContext;
+    if (latestWindowInfo) {
+      const ctx = inferContext(latestWindowInfo);
+      flowLog.contextResolved("auto", ctx, latestWindowInfo.processName, latestWindowInfo.windowTitle);
+      return ctx;
+    }
+    return "chat";
+  }
+
+  // Brief overlay nack pulse, then revert to whatever the active state was.
+  const nackOverlay = useCallback(() => {
+    if (!isTauri) return;
+    let prevState: string | null = null;
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      try {
+        await invoke("set_overlay_state", { state: "nack" });
+        prevState = "recording";
+      } catch { /* ignore */ }
+      setTimeout(async () => {
+        try {
+          await invoke("set_overlay_state", { state: prevState ?? "recording" });
+        } catch { /* ignore */ }
+      }, 400);
+    })();
+  }, []);
+
+  // Brief positive confirmation pulse when a voice send fires successfully.
+  // Distinct from nack so the user can hear/see the difference — critical for
+  // earphone-first workflows where the user isn't watching the screen.
+  const sendOkOverlay = useCallback(() => {
+    if (!isTauri) return;
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      try {
+        await invoke("set_overlay_state", { state: "send_ok" });
+      } catch { /* ignore */ }
+      setTimeout(async () => {
+        try {
+          await invoke("set_overlay_state", { state: "quiet" });
+        } catch { /* ignore */ }
+      }, 500);
+    })();
+  }, []);
+
+  // Accessibility permission probe. Seeded before the Flow Mode queue is
+  // constructed — matches the Stage 4 startup-timing invariant. On Windows
+  // this resolves to "granted" immediately and stays there; the whole
+  // permission pipeline is inert. On macOS (Stage 6+) it reflects the real
+  // `AXIsProcessTrusted()` probe and pushes events on focus regain.
+  const accessibility = useAccessibilityPermission();
+
+  const flow = useFlowMode({
+    resolveContext: resolveFlowContext,
+    // Overlay sync used to live here; it's now centralized in the useEffect
+    // below so the accessibility-denied path and the Flow-state path share
+    // one source of truth and can't disagree on the final overlay state.
+    nack: nackOverlay,
+    sendOk: sendOkOverlay,
+    accessibilityStatus: accessibility.status,
+  });
+
+  // Single source of truth for the overlay state. Accessibility denial has
+  // priority — when blocked, the overlay holds at `blocked` regardless of
+  // whether Flow Mode is recording, quiet, or idle. When permission is
+  // restored, the overlay reflects the current Flow state (or "hiding" if
+  // Flow is idle). Runs whether or not the overlay is visible — the Rust
+  // side caches the last state and re-applies it when the window reveals.
+  useEffect(() => {
+    if (!isTauri) return;
+    const flowState = flow.state;
+    const overlayState =
+      accessibility.status === "denied" ? "blocked" :
+      flowState === "recording" ? "recording" :
+      flowState === "quiet" ? "quiet" :
+      flowState === "transcribing" || flowState === "stopping" ? "transcribing" :
+      "hiding";
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("set_overlay_state", { state: overlayState }).catch(() => {})
+    );
+  }, [accessibility.status, flow.state]);
 
   // Shortcuts
   const [shortcuts, setShortcuts] = useState<Record<ShortcutId, string>>(() => {
@@ -153,6 +261,7 @@ export default function App() {
   const handleRecordRef = useRef<() => void>(() => {});
   const handleTranscribeRef = useRef<() => void>(() => {});
   const handleClearRef = useRef<() => void>(() => {});
+  const handleFlowToggleRef = useRef<() => void>(() => {});
   const hasAudioRef = useRef(false);
 
   // Listen for global shortcut events fired by Tauri (registered once, uses refs)
@@ -166,6 +275,7 @@ export default function App() {
           else if (id === "upload") triggerUploadPicker();
           else if (id === "transcribe") { if (hasAudioRef.current) handleTranscribeRef.current(); }
           else if (id === "clear") handleClearRef.current();
+          else if (id === "flow") handleFlowToggleRef.current();
         }).then((fn) => { unlisten = fn; });
       });
     return () => unlisten?.();
@@ -466,10 +576,101 @@ export default function App() {
     recording.clearRecording();
   }
 
+  // ── Flow Mode handlers ──────────────────────────────────────────────────
+  const handleFlowToggle = useCallback(() => {
+    if (!flow.isActive) {
+      // Mutual exclusion: don't start Flow during a classic recording.
+      if (recording.isRecording || isBusy) {
+        addLog("warn", "Cannot start Flow while a classic recording or transcription is active");
+        return;
+      }
+      // Show overlay first so the visual paints immediately.
+      if (isTauri) {
+        overlayShownRef.current = true;
+        void import("@tauri-apps/api/core").then(({ invoke }) => invoke("show_overlay")).catch(() => {});
+      }
+      void flow.start({
+        langs,
+        selectedMicId: selectedMicId || undefined,
+        contextOverride: flowContext,
+      }).then(() => {
+        addLog("info", `Flow Mode started · context=${flowContext}`);
+      }).catch((e) => {
+        addLog("error", `Flow Mode start failed: ${String(e)}`);
+      });
+    } else {
+      void flow.stop().then(() => {
+        addLog("info", "Flow Mode stopped");
+      });
+    }
+  }, [flow, recording.isRecording, isBusy, langs, selectedMicId, flowContext, addLog]);
+
+  // Poll active window for the picker preview and the auto-context resolver.
+  useEffect(() => {
+    if (!isTauri) return;
+    if (!flow.isActive && flowContext !== "auto") return;
+    let cancelled = false;
+    let invokeF: ((cmd: string, args?: unknown) => Promise<unknown>) | null = null;
+    void import("@tauri-apps/api/core").then(({ invoke }) => {
+      invokeF = invoke as typeof invokeF;
+    });
+    const tick = async () => {
+      if (cancelled || !invokeF) return;
+      try {
+        const raw = (await invokeF("get_active_window_info")) as {
+          process_name: string; window_title: string; is_self: boolean;
+        } | null;
+        if (raw && !cancelled) {
+          setLatestWindowInfo({ processName: raw.process_name ?? "", windowTitle: raw.window_title ?? "", isSelf: !!raw.is_self });
+        }
+      } catch { /* ignore */ }
+    };
+    void tick();
+    const id = setInterval(tick, 1000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [flow.isActive, flowContext]);
+
+  // While Flow is active, stream waveform levels to the overlay (same loop
+  // pattern as classic mode, but reading from flow.analyserRef).
+  useEffect(() => {
+    if (!isTauri || !flow.isActive) return;
+    let invokeF: ((cmd: string, args: unknown) => Promise<unknown>) | null = null;
+    void import("@tauri-apps/api/core").then(({ invoke }) => { invokeF = invoke as typeof invokeF; });
+    const freqData = new Uint8Array(128);
+    const id = setInterval(() => {
+      const analyser = flow.analyserRef.current;
+      if (!invokeF || !analyser) return;
+      analyser.getByteFrequencyData(freqData);
+      const levels = OVERLAY_BANDS.map(([lo, hi]) => {
+        let sum = 0;
+        const end = Math.min(hi, freqData.length - 1);
+        for (let j = lo; j <= end; j++) sum += freqData[j] ?? 0;
+        return sum / ((end - lo + 1) * 255);
+      });
+      void invokeF("send_overlay_levels", { levels });
+    }, 50);
+    return () => clearInterval(id);
+  }, [flow.isActive, flow.analyserRef]);
+
+  // Hide overlay when Flow stops.
+  useEffect(() => {
+    if (!isTauri) return;
+    if (flow.isActive) return;
+    if (!overlayShownRef.current) return;
+    // Only hide if classic isn't using the overlay either.
+    if (recording.isRecording || appState === "processing") return;
+    overlayShownRef.current = false;
+    overlayHasBeenActiveRef.current = false;
+    void import("@tauri-apps/api/core").then(({ invoke }) =>
+      invoke("set_overlay_state", { state: "hiding" })
+    ).catch(() => {});
+  }, [flow.isActive, recording.isRecording, appState]);
+
   // Keep Tauri shortcut refs in sync with latest handlers
   handleRecordRef.current = handleRecord;
   handleTranscribeRef.current = handleTranscribe;
   handleClearRef.current = handleClear;
+  handleFlowToggleRef.current = handleFlowToggle;
   hasAudioRef.current = hasAudio;
 
   // Keyboard shortcuts
@@ -502,6 +703,50 @@ export default function App() {
 
   return (
     <div className="app">
+      {accessibility.status === "denied" && (
+        <div
+          role="alert"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9000,
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            background: "rgba(180, 90, 40, 0.95)",
+            color: "#fff",
+            fontSize: 12.5,
+            fontFamily: "var(--font-mono, ui-monospace, monospace)",
+            boxShadow: "0 1px 8px rgba(0, 0, 0, 0.35)",
+            borderBottom: "1px solid rgba(255, 255, 255, 0.15)",
+          }}
+        >
+          <strong style={{ fontWeight: 600 }}>Accessibility required</strong>
+          <span style={{ opacity: 0.9, flex: 1 }}>
+            Grant Spokn access in System Settings → Privacy → Accessibility so
+            it can type into other apps. Flow Mode is suspended until then.
+          </span>
+          <button
+            onClick={accessibility.reprobe}
+            style={{
+              background: "rgba(255, 255, 255, 0.15)",
+              color: "#fff",
+              border: "1px solid rgba(255, 255, 255, 0.35)",
+              borderRadius: 4,
+              padding: "4px 10px",
+              fontSize: 11,
+              fontFamily: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            Check again
+          </button>
+        </div>
+      )}
       <LeftPanel
         mode={mode} setMode={setMode}
         langs={langs} setLangs={setLangs}
@@ -519,6 +764,11 @@ export default function App() {
         onAddSnippet={handleAddSnippet}
         onRemoveSnippet={handleRemoveSnippet}
         shortcuts={shortcuts}
+        flowActive={flow.isActive}
+        flowContext={flowContext}
+        flowResolvedContext={flow.resolvedContext}
+        onFlowToggle={handleFlowToggle}
+        onFlowContextChange={setFlowContext}
       />
 
       <div style={{ display: "grid", gridTemplateRows: "1fr auto", minHeight: 0, overflow: "hidden" }}>
@@ -539,6 +789,8 @@ export default function App() {
           onTypingTextChange={setTypingText}
           injectMode={autoInjectMode}
           onTypeNow={manualInject}
+          flowBufferText={flow.bufferText}
+          flowActive={flow.isActive}
         />
         <LogsPanel logs={logs} onClear={clearLogs} />
       </div>
