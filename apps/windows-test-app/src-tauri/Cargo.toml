@@ -13,7 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# `macos-private-api` unlocks WebviewWindowBuilder::transparent() on macOS
+# (feature-gated there in tauri 2). Overlay window needs transparency on
+# both platforms; Windows is unaffected by this flag.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-shell = "2"
 arboard = "3"
@@ -46,5 +49,9 @@ uiautomation = "0.15"
 core-foundation = "0.10"
 core-graphics = "0.24"
 objc2 = "0.5"
-objc2-app-kit = "0.2"
+# objc2-app-kit 0.2 feature-gates every class. We need NSWorkspace +
+# NSRunningApplication for the frontmost-app read; they pull in the
+# required NSString / NSURL / NSArray objc2-foundation features transitively.
+# `libc` is required to expose NSRunningApplication.processIdentifier() → pid_t.
+objc2-app-kit = { version = "0.2", features = ["NSWorkspace", "NSRunningApplication", "libc"] }
 objc2-foundation = "0.2"
