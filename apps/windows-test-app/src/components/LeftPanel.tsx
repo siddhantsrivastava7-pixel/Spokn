@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { IMic, IStop, IUpload, ISpark, ILayers, ICpu, IPackage, IChevronDown } from "./Icons";
 import { SpoknMark } from "./SpoknMark";
 import { LanguagePicker } from "./LanguagePicker";
+import { PlatformStatus } from "./PlatformStatus";
 import type { AppState } from "../App";
 import type { Snippet } from "../lib/snippets";
 import type { FlowContext } from "../lib/flowToneMapping";
@@ -156,6 +157,7 @@ export function LeftPanel({
             </button>
           ))}
         </div>
+        <PlatformStatus variant="compact" />
       </div>
 
       {/* Engine */}

@@ -56,6 +56,12 @@ mod stub {
         pub fn ms_since_last() -> u64 {
             u64::MAX
         }
+        /// Dev-only platforms never install a hook; surface the sentinel
+        /// status so the TS guard degrades to "no typing detected" without
+        /// any UI surfacing.
+        pub fn status() -> &'static str {
+            "inactive_platform_stub"
+        }
     }
 }
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]

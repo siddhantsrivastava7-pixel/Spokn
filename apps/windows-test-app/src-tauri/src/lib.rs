@@ -430,6 +430,21 @@ fn get_last_keystroke_ms_ago() -> u64 {
     platform::keyboard_activity::ms_since_last()
 }
 
+/// Returns the typing-guard installation status for observability + UI:
+///   - "active"                   — hook / tap installed and listening.
+///   - "degraded_no_permission"   — macOS-only; Input Monitoring denied.
+///                                  Typing guard no-ops; Flow Mode still works.
+///   - "inactive_platform_stub"   — install() has not run yet, or the platform
+///                                  has no hook (unsupported dev targets).
+///
+/// TS callers log a single `flow.typing_guard_degraded` event when the value
+/// is `"degraded_no_permission"`, and surface a subtle status line in
+/// LeftPanel / DebugPanel.
+#[tauri::command]
+fn get_typing_guard_status() -> &'static str {
+    platform::keyboard_activity::status()
+}
+
 // ── Accessibility permission (macOS) ─────────────────────────────────────────
 //
 // macOS requires user-granted Accessibility permission for synthesized
@@ -484,7 +499,7 @@ pub fn run() {
             overlay_ready, request_stop_from_overlay,
             get_backend_port,
             get_active_window_info, is_target_focused,
-            get_last_keystroke_ms_ago, read_focused_text,
+            get_last_keystroke_ms_ago, get_typing_guard_status, read_focused_text,
             check_accessibility_permission,
         ])
         .setup(|app| {

@@ -1,4 +1,5 @@
 import { ICpu } from "./Icons";
+import { PlatformStatus } from "./PlatformStatus";
 import type {
   ConfidenceTier,
   IntentDetection,
@@ -67,6 +68,13 @@ export function DebugPanel({ open, result, mode, langs, flowBufferText, flowActi
           </div>
         </div>
         <div className="debug-body">
+          {/* Stage 7 — typing-guard install status. Hidden on Windows +
+              unresolved; renders a short hint on macOS when granted /
+              degraded so power users can confirm what Flow Mode is seeing. */}
+          <div className="dbg-group">
+            <PlatformStatus variant="detailed" />
+          </div>
+
           {/* Flow session buffer — the canonical record of what has been
               committed to the target app across the current Flow session.
               Previously mirrored in the main Workspace; moved here since

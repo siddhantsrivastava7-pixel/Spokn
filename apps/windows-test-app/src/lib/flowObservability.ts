@@ -5,12 +5,54 @@
 type Level = "info" | "warn";
 type Fields = Record<string, string | number | boolean | undefined>;
 
+/**
+ * Stage 7 — Typing guard install status, stamped into every Flow log line as
+ * `typingGuardStatus`. Values mirror the Rust `get_typing_guard_status`
+ * command plus an `"unknown"` bootstrap state for the brief window before
+ * the first probe returns.
+ *
+ * Not breaking for existing grep consumers: the field is appended only when
+ * the status is a real known value, and only as an additive key in the
+ * existing fields dict.
+ */
+export type TypingGuardStatus =
+  | "unknown"
+  | "active"
+  | "degraded_no_permission"
+  | "inactive_platform_stub";
+
+let typingGuardStatus: TypingGuardStatus = "unknown";
+const typingGuardSubs = new Set<(s: TypingGuardStatus) => void>();
+
+export function setTypingGuardStatus(s: TypingGuardStatus) {
+  if (s === typingGuardStatus) return;
+  typingGuardStatus = s;
+  for (const cb of typingGuardSubs) cb(s);
+}
+
+export function getTypingGuardStatus(): TypingGuardStatus {
+  return typingGuardStatus;
+}
+
+/** Subscribe to status transitions. Returns an unsubscribe thunk. */
+export function subscribeTypingGuardStatus(
+  cb: (s: TypingGuardStatus) => void,
+): () => void {
+  typingGuardSubs.add(cb);
+  return () => {
+    typingGuardSubs.delete(cb);
+  };
+}
+
 function fmt(event: string, fields: Fields): string {
   const parts: string[] = [`[flow]`, event.padEnd(22)];
   for (const [k, v] of Object.entries(fields)) {
     if (v === undefined) continue;
     const sv = typeof v === "string" ? `"${v}"` : String(v);
     parts.push(`${k}=${sv}`);
+  }
+  if (typingGuardStatus !== "unknown") {
+    parts.push(`typingGuardStatus="${typingGuardStatus}"`);
   }
   return parts.join(" ");
 }
@@ -236,6 +278,16 @@ export const flowLog = {
       flowState: fields.flowState,
       blockedEpisodeEntry: fields.blockedEpisodeEntry,
     }),
+
+  // ── Stage 7 — macOS typing guard (CGEventTap) ───────────────────────────
+  //
+  // Fired exactly once per app session when the Rust typing-guard install
+  // reports `"degraded_no_permission"`. The status itself is also stamped
+  // into every Flow log line via `typingGuardStatus`, so this event mostly
+  // exists so automated log scans can grep a single line for the "user
+  // hasn't granted Input Monitoring" condition.
+  typingGuardDegraded: (status: TypingGuardStatus) =>
+    emit("warn", "typing_guard_degraded", { status }),
 };
 
 /**

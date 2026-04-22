@@ -93,12 +93,20 @@ pub fn read_active_window_info(self_titles: &[String]) -> ActiveWindowInfo {
 // real hardware keys from synthesized ones — we skip synthesized keys.
 
 pub mod keyboard_activity {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Epoch-millis of the last real (non-injected) keystroke. u64::MAX = never.
     static LAST_KEYSTROKE_MS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+    // Typing guard observability status — mirrors the macOS enum so the
+    // Tauri command returns identical shapes. Windows only ever reports
+    // "active" (hook install succeeded — no user permission required) or
+    // "inactive_platform_stub" (install() not yet called).
+    const STATUS_INACTIVE: u8 = 0;
+    const STATUS_ACTIVE: u8 = 1;
+    static HOOK_STATUS: AtomicU8 = AtomicU8::new(STATUS_INACTIVE);
 
     fn now_ms() -> u64 {
         SystemTime::now()
@@ -113,6 +121,17 @@ pub mod keyboard_activity {
             return u64::MAX;
         }
         now_ms().saturating_sub(last)
+    }
+
+    /// Returns the typing-guard status for observability / UI. Parallel to
+    /// the macOS `status()` — Windows doesn't have a permission-denied state
+    /// (no TCC gate for WH_KEYBOARD_LL), so the only outcomes are "active"
+    /// once the hook is installed or "inactive_platform_stub" before.
+    pub fn status() -> &'static str {
+        match HOOK_STATUS.load(Ordering::Relaxed) {
+            STATUS_ACTIVE => "active",
+            _ => "inactive_platform_stub",
+        }
     }
 
     /// Install the hook on a dedicated thread with its own message pump.
@@ -151,6 +170,7 @@ pub mod keyboard_activity {
                 );
                 match hook {
                     Ok(_h) => {
+                        HOOK_STATUS.store(STATUS_ACTIVE, Ordering::Relaxed);
                         // Keep the thread alive with a message pump — the hook
                         // fires in this thread's context.
                         let mut msg = MSG::default();

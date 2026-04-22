@@ -1,9 +1,9 @@
 // macOS platform bridges.
 //
-// Stage 4 (Accessibility permission probe) and Stage 6 (active-window read)
-// land here. Stage 7 (CGEventTap typing guard) and Stage 8 (AX focused-text
-// read) remain stubbed — they're easier to develop iteratively on actual
-// hardware.
+// Stage 4 (Accessibility permission probe), Stage 6 (active-window read), and
+// Stage 7 (CGEventTap typing guard) land here. Stage 8 (AX focused-text read)
+// remains stubbed — AX reliability varies too widely across apps to ship
+// without a toggle.
 //
 // Crate layout:
 //   - Apple ObjC runtime via `objc2` + `objc2-app-kit` + `objc2-foundation`
@@ -268,15 +268,155 @@ pub fn read_focused_element_text_impl() -> Result<String, String> {
     Err("read_focused_text is not yet implemented on macOS".into())
 }
 
-// ── Keyboard activity hook — Stage 7 (deferred) ──────────────────────────────
+// ── Keyboard activity hook — Stage 7 (CGEventTap) ────────────────────────────
+//
+// Global system-wide key-down listener feeds `LAST_KEYSTROKE_MS`. TS side polls
+// `get_last_keystroke_ms_ago` every 200ms; the typing-cooldown gate in
+// useFlowMode raises the audio bar for utterances committed within the
+// cooldown window.
+//
+// Privacy invariant: the callback writes ONE atomic timestamp and nothing
+// else. Key codes, key names, modifier state, scan codes, and synthesized
+// content are NEVER stored, transmitted, or logged. This is identical to the
+// Windows invariant in `platform::windows::keyboard_activity`. A code review
+// should be able to confirm this at a glance — the callback body is
+// intentionally tiny.
+//
+// Self-trigger filter: enigo stamps every synthesized event with
+// `kCGEventSourceUserData == enigo::EVENT_MARKER` (currently 100). The
+// callback reads field 42 and skips matches so our own Cmd+V / Enter never
+// advance the timestamp. We use the enigo constant directly — a future
+// enigo bump that changes the marker will not silently break the filter.
+// Note: enigo on macOS does NOT use `CGEventSourceStateID::Private`; it
+// creates its source with `CombinedSessionState`, so a state-id filter
+// would incorrectly treat our injections as real keystrokes.
+//
+// Permission model: CGEventTap requires the user to grant Input Monitoring
+// (System Settings → Privacy & Security → Input Monitoring). If it's not
+// granted, CGEventTapCreate returns NULL and we collapse to the "never seen a
+// key" sentinel `u64::MAX`. The TS guard then silently no-ops — Flow Mode
+// still transcribes, just without the typing-cooldown sharpening.
 
 pub mod keyboard_activity {
-    // Stage 7 replaces these with a CGEventTap-backed implementation.
-    // `u64::MAX` is the "never observed a keystroke" sentinel that the
-    // TS typing guard already handles.
-    pub fn install() {}
+    use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+    use std::thread;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
+    use core_graphics::event::{
+        CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType, EventField,
+    };
+
+    /// Epoch-millis of the last real (non-injected) keystroke.
+    /// `u64::MAX` = no keystroke observed this session.
+    static LAST_KEYSTROKE_MS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+    // Typing guard observability status, read by `get_typing_guard_status`.
+    // 0 = inactive (install() not yet called on this platform path)
+    // 1 = active (tap installed and listening)
+    // 2 = degraded_no_permission (CGEventTapCreate returned NULL)
+    const STATUS_INACTIVE: u8 = 0;
+    const STATUS_ACTIVE: u8 = 1;
+    const STATUS_DEGRADED_NO_PERMISSION: u8 = 2;
+    static TAP_STATUS: AtomicU8 = AtomicU8::new(STATUS_INACTIVE);
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
 
     pub fn ms_since_last() -> u64 {
-        u64::MAX
+        let last = LAST_KEYSTROKE_MS.load(Ordering::Relaxed);
+        if last == u64::MAX {
+            return u64::MAX;
+        }
+        now_ms().saturating_sub(last)
+    }
+
+    /// Returns the current typing-guard status for observability / UI:
+    ///   - "active"                   — tap installed and listening.
+    ///   - "degraded_no_permission"   — Input Monitoring denied; tap not installed.
+    ///   - "inactive_platform_stub"   — install() has not run (shouldn't happen
+    ///                                  once `setup()` runs) or unsupported OS.
+    pub fn status() -> &'static str {
+        match TAP_STATUS.load(Ordering::Relaxed) {
+            STATUS_ACTIVE => "active",
+            STATUS_DEGRADED_NO_PERMISSION => "degraded_no_permission",
+            _ => "inactive_platform_stub",
+        }
+    }
+
+    /// Install the CGEventTap on a dedicated thread with its own CFRunLoop.
+    /// Never returns on success — the thread lives for the app lifetime.
+    /// On failure (Input Monitoring not granted) we log once and leave
+    /// `LAST_KEYSTROKE_MS = u64::MAX`; the TS poll silently treats that as
+    /// "no keystroke observed" and the typing guard no-ops.
+    pub fn install() {
+        thread::spawn(|| {
+            // `core_graphics::event::CGEventTap::new` takes an `Fn` closure
+            // that receives `(proxy, CGEventType, &CGEvent)`. The closure body
+            // MUST stay minimal — this is the privacy invariant. Only one
+            // atomic store on the hot path.
+            //
+            // Returning `None` from this closure (because options =
+            // ListenOnly) forwards the event unchanged — we never modify
+            // user input.
+            let tap = core_graphics::event::CGEventTap::new(
+                CGEventTapLocation::HID,
+                CGEventTapPlacement::HeadInsertEventTap,
+                CGEventTapOptions::ListenOnly,
+                vec![CGEventType::KeyDown],
+                |_proxy, etype, event| {
+                    if matches!(etype, CGEventType::KeyDown) {
+                        // Skip our own enigo-synthesized keystrokes. enigo
+                        // tags every event with `CGEventSourceUserData =
+                        // enigo::EVENT_MARKER` (100). Real hardware key
+                        // events never carry this value, so the inequality
+                        // check cleanly separates the two.
+                        let user_data = event
+                            .get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA);
+                        if user_data != enigo::EVENT_MARKER as i64 {
+                            LAST_KEYSTROKE_MS
+                                .store(now_ms(), Ordering::Relaxed);
+                        }
+                    }
+                    None
+                },
+            );
+
+            let Ok(tap) = tap else {
+                TAP_STATUS.store(STATUS_DEGRADED_NO_PERMISSION, Ordering::Relaxed);
+                eprintln!(
+                    "[keyboard_activity] CGEventTapCreate returned NULL — \
+                     Input Monitoring not granted. Typing guard disabled."
+                );
+                return;
+            };
+
+            // Safe block: mach_port.create_runloop_source + CFRunLoop::run_current
+            // require an active autorelease pool / run loop on this thread,
+            // which the kernel supplies for each new thread's current run loop.
+            unsafe {
+                let Ok(loop_source) = tap.mach_port.create_runloop_source(0) else {
+                    TAP_STATUS.store(STATUS_DEGRADED_NO_PERMISSION, Ordering::Relaxed);
+                    eprintln!(
+                        "[keyboard_activity] create_runloop_source failed; \
+                         typing guard disabled."
+                    );
+                    return;
+                };
+
+                let current = CFRunLoop::get_current();
+                current.add_source(&loop_source, kCFRunLoopCommonModes);
+                tap.enable();
+                TAP_STATUS.store(STATUS_ACTIVE, Ordering::Relaxed);
+
+                // Blocks for the lifetime of the app. The callback above runs
+                // in this thread's context when key-down events arrive.
+                CFRunLoop::run_current();
+            }
+        });
     }
 }
