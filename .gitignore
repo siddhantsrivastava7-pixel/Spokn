@@ -23,10 +23,11 @@ apps/*/src-tauri/binaries/*
 spokn-backend*.exe
 spokn-backend
 
-# Local app data / cached models (never commit models)
+# Local app data / cached models (never commit model weights)
+# NOTE: do not add `models/` here — there is a source directory
+# packages/stt-core/src/models/ that must be committed.
 *.gguf
 *.bin
-models/
 
 # OS
 .DS_Store
