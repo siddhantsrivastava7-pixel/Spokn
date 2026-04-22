@@ -25,6 +25,10 @@ type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 interface RawWindowInfo {
   process_name: string;
+  /** macOS: bundleIdentifier; Windows: empty. */
+  bundle_id?: string;
+  /** macOS: localizedName; Windows: empty. */
+  localized_name?: string;
   window_title: string;
   is_self: boolean;
 }
@@ -89,8 +93,15 @@ export function createCursorAwareness(deps: CursorAwarenessDeps): CursorAwarenes
     // Raw fingerprint equality here — normalization is done by
     // flowExternalEditCapture for edit reconciliation. For focus-debounce
     // purposes, a title-only flicker (e.g. Slack unread counter) should NOT
-    // cause a reset — we compare process names only, which matches how a user
-    // thinks about "switched apps".
+    // cause a reset — we compare stable identifiers only, matching how a
+    // user thinks about "switched apps".
+    //
+    // macOS: prefer bundleId (stable across renames / version bumps);
+    // Windows: fall back to processName (bundleId is empty). Either identity
+    // on either side is enough to count as "same target".
+    if (a.bundleId && b.bundleId) {
+      return a.bundleId === b.bundleId;
+    }
     return a.processName === b.processName;
   }
 
@@ -141,6 +152,8 @@ export function createCursorAwareness(deps: CursorAwarenessDeps): CursorAwarenes
       if (!raw) return;
       const info: ActiveWindowInfo = {
         processName: raw.process_name ?? "",
+        bundleId: raw.bundle_id ?? "",
+        localizedName: raw.localized_name ?? "",
         windowTitle: raw.window_title ?? "",
         isSelf: !!raw.is_self,
       };

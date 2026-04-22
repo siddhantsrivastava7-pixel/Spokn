@@ -117,8 +117,15 @@ export default function App() {
 
   // Latest active-window info, polled by useFlowMode's awareness layer.
   // We also re-poll here so the LeftPanel can show "auto · email" before
-  // the first utterance lands.
-  const [latestWindowInfo, setLatestWindowInfo] = useState<{ processName: string; windowTitle: string; isSelf: boolean } | null>(null);
+  // the first utterance lands. Shape mirrors the ActiveWindowInfo contract
+  // in flowAutoContext.ts — bundleId / localizedName are empty on Windows.
+  const [latestWindowInfo, setLatestWindowInfo] = useState<{
+    processName: string;
+    bundleId: string;
+    localizedName: string;
+    windowTitle: string;
+    isSelf: boolean;
+  } | null>(null);
 
   function resolveFlowContext(): FlowContext {
     if (flowContext !== "auto") return flowContext;
@@ -618,10 +625,20 @@ export default function App() {
       if (cancelled || !invokeF) return;
       try {
         const raw = (await invokeF("get_active_window_info")) as {
-          process_name: string; window_title: string; is_self: boolean;
+          process_name: string;
+          bundle_id?: string;
+          localized_name?: string;
+          window_title: string;
+          is_self: boolean;
         } | null;
         if (raw && !cancelled) {
-          setLatestWindowInfo({ processName: raw.process_name ?? "", windowTitle: raw.window_title ?? "", isSelf: !!raw.is_self });
+          setLatestWindowInfo({
+            processName: raw.process_name ?? "",
+            bundleId: raw.bundle_id ?? "",
+            localizedName: raw.localized_name ?? "",
+            windowTitle: raw.window_title ?? "",
+            isSelf: !!raw.is_self,
+          });
         }
       } catch { /* ignore */ }
     };

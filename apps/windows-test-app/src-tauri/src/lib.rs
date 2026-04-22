@@ -86,12 +86,20 @@ pub struct ShortcutEntry {
     pub key: String,
 }
 
-/// Wraps bare single-key shortcuts in Ctrl+Shift to avoid intercepting typing.
+/// Wraps bare single-key shortcuts in a safe chord so we don't intercept
+/// regular typing. Chord follows platform convention: Ctrl+Shift on Windows,
+/// Cmd+Shift on macOS. Callers that already pass a full chord (anything
+/// containing '+') are forwarded as-is and only lowercased — the global-
+/// shortcut plugin accepts both `ctrl+...` and `cmd+...` tokens cross-OS.
 fn safe_global_key(key: &str) -> String {
     if key.contains('+') {
         key.to_lowercase()
     } else {
-        format!("ctrl+shift+{}", key.to_lowercase())
+        #[cfg(target_os = "macos")]
+        let prefix = "cmd+shift+";
+        #[cfg(not(target_os = "macos"))]
+        let prefix = "ctrl+shift+";
+        format!("{}{}", prefix, key.to_lowercase())
     }
 }
 
@@ -145,7 +153,12 @@ fn overlay_position(app: &tauri::AppHandle) -> (f64, f64) {
     let ow = 260.0 * scale;
     let oh =  48.0 * scale;
     let pad_right  = 20.0 * scale;
-    let pad_bottom = 60.0 * scale; // clears the Windows taskbar
+    // Bottom padding clears the OS chrome: Windows taskbar (~40px) vs macOS
+    // Dock/menubar (Dock is side or auto-hide for most users, menubar is top).
+    #[cfg(target_os = "macos")]
+    let pad_bottom = 20.0 * scale;
+    #[cfg(not(target_os = "macos"))]
+    let pad_bottom = 60.0 * scale;
     let x = pos.x as f64 + size.width  as f64 - ow - pad_right;
     let y = pos.y as f64 + size.height as f64 - oh - pad_bottom;
     eprintln!(
@@ -244,6 +257,23 @@ fn request_stop_from_overlay(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 // ── Text injection ────────────────────────────────────────────────────────────
+//
+// Modifier resolution: `enigo::Key::Meta` maps to Cmd on macOS and the Win
+// key on Windows, while `Key::Control` is uniformly Ctrl. Paste/select-all on
+// macOS use Cmd; on Windows they use Ctrl. The helper below keeps call sites
+// free of cfg blocks.
+
+#[inline]
+fn primary_modifier() -> Key {
+    #[cfg(target_os = "macos")]
+    {
+        Key::Meta
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Key::Control
+    }
+}
 
 #[tauri::command]
 fn inject_text(text: String) -> Result<(), String> {
@@ -254,26 +284,28 @@ fn inject_text(text: String) -> Result<(), String> {
     // Small delay so the clipboard write settles before apps read it
     std::thread::sleep(Duration::from_millis(150));
 
-    // Simulate Ctrl+V into whatever window is currently focused
+    // Simulate Cmd+V (macOS) / Ctrl+V (Windows) into the focused window.
+    let modifier = primary_modifier();
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo.key(Key::Control, enigo::Direction::Press).map_err(|e| e.to_string())?;
+    enigo.key(modifier, enigo::Direction::Press).map_err(|e| e.to_string())?;
     enigo.key(Key::Unicode('v'), enigo::Direction::Click).map_err(|e| e.to_string())?;
-    enigo.key(Key::Control, enigo::Direction::Release).map_err(|e| e.to_string())?;
+    enigo.key(modifier, enigo::Direction::Release).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-/// Full-buffer replace used by Flow Mode corrections. Performs Ctrl+A,
-/// then writes the new text to clipboard, then Ctrl+V. The TS-side queue
+/// Full-buffer replace used by Flow Mode corrections. Performs Cmd/Ctrl+A,
+/// then writes the new text to clipboard, then Cmd/Ctrl+V. The TS-side queue
 /// schedules these to coalesce rapid corrections into a single re-paste.
 #[tauri::command]
 fn inject_full_replace(text: String) -> Result<(), String> {
+    let modifier = primary_modifier();
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
 
-    // Ctrl+A — select everything in the focused field
-    enigo.key(Key::Control, enigo::Direction::Press).map_err(|e| e.to_string())?;
+    // Cmd/Ctrl+A — select everything in the focused field
+    enigo.key(modifier, enigo::Direction::Press).map_err(|e| e.to_string())?;
     enigo.key(Key::Unicode('a'), enigo::Direction::Click).map_err(|e| e.to_string())?;
-    enigo.key(Key::Control, enigo::Direction::Release).map_err(|e| e.to_string())?;
+    enigo.key(modifier, enigo::Direction::Release).map_err(|e| e.to_string())?;
 
     // Tiny pause so the selection registers before paste in laggy apps
     std::thread::sleep(Duration::from_millis(40));
@@ -283,17 +315,28 @@ fn inject_full_replace(text: String) -> Result<(), String> {
 
     std::thread::sleep(Duration::from_millis(80));
 
-    enigo.key(Key::Control, enigo::Direction::Press).map_err(|e| e.to_string())?;
+    enigo.key(modifier, enigo::Direction::Press).map_err(|e| e.to_string())?;
     enigo.key(Key::Unicode('v'), enigo::Direction::Click).map_err(|e| e.to_string())?;
-    enigo.key(Key::Control, enigo::Direction::Release).map_err(|e| e.to_string())?;
+    enigo.key(modifier, enigo::Direction::Release).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 /// Press a submit-style key in the focused app. Used by Flow Mode's voice
-/// send command — the TS layer decides which key to dispatch based on context
-/// (Enter for chat, CtrlEnter for future email support, Noop short-circuits
-/// before reaching this command).
+/// send command. Accepted primitives:
+///
+///   - `"Enter"`      — plain Return
+///   - `"CtrlEnter"`  — Ctrl+Return on every platform (Ctrl chords still
+///                       work on macOS keyboards; some apps bind to them).
+///   - `"CmdEnter"`   — Cmd+Return. Mapped to the Win key on Windows, which
+///                       is almost never useful — TS side is responsible
+///                       for only dispatching this on macOS.
+///   - `"ShiftEnter"` — Shift+Return (newline vs. submit distinction in
+///                       some chat apps).
+///
+/// The Rust layer stays "dumb": it does not remap modifiers based on host
+/// OS. `flowSendMap.ts` is the single source of truth for which primitive
+/// to dispatch per FlowContext + platform.
 ///
 /// The TS-side queue guarantees: (a) any prior paste has drained, (b) any
 /// coalesce/settle timer has fired, (c) the buffer is visible in the target
@@ -305,15 +348,22 @@ fn send_key(key: String) -> Result<(), String> {
     std::thread::sleep(Duration::from_millis(80));
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+
+    /// Press-modifier → click Return → release-modifier as a single chord.
+    fn chord(enigo: &mut Enigo, modifier: Key) -> Result<(), String> {
+        enigo.key(modifier, enigo::Direction::Press).map_err(|e| e.to_string())?;
+        enigo.key(Key::Return, enigo::Direction::Click).map_err(|e| e.to_string())?;
+        enigo.key(modifier, enigo::Direction::Release).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     match key.as_str() {
         "Enter" => {
             enigo.key(Key::Return, enigo::Direction::Click).map_err(|e| e.to_string())?;
         }
-        "CtrlEnter" => {
-            enigo.key(Key::Control, enigo::Direction::Press).map_err(|e| e.to_string())?;
-            enigo.key(Key::Return, enigo::Direction::Click).map_err(|e| e.to_string())?;
-            enigo.key(Key::Control, enigo::Direction::Release).map_err(|e| e.to_string())?;
-        }
+        "CtrlEnter"  => chord(&mut enigo, Key::Control)?,
+        "CmdEnter"   => chord(&mut enigo, Key::Meta)?,
+        "ShiftEnter" => chord(&mut enigo, Key::Shift)?,
         _ => return Err(format!("unsupported send key: {key}")),
     }
     Ok(())
