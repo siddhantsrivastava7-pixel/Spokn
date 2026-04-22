@@ -44,6 +44,55 @@ export function subscribeTypingGuardStatus(
   };
 }
 
+let typingGuardProbed = false;
+
+type ProbeInvoke = (
+  cmd: string,
+  args?: Record<string, unknown>,
+) => Promise<unknown>;
+
+/**
+ * One-shot probe of the Rust-side typing guard install status. Idempotent —
+ * only the first call does IPC. Publishes the result into the subscribable
+ * store so both LeftPanel/DebugPanel (via `useTypingGuardStatus`) and every
+ * subsequent `[flow]` log line (via the `typingGuardStatus` stamp) see a
+ * consistent value.
+ *
+ * Must run at app startup — if it's gated on Flow Mode starting, the
+ * "Typing awareness: Limited" hint stays hidden on macOS exactly in the
+ * window where the user could grant Input Monitoring ahead of first use.
+ *
+ * Fires `flow.typing_guard_degraded` exactly once if the first probe
+ * reports `"degraded_no_permission"`.
+ */
+export async function probeTypingGuardStatusOnce(
+  invoke: ProbeInvoke,
+): Promise<void> {
+  if (typingGuardProbed) return;
+  try {
+    const raw = await invoke("get_typing_guard_status");
+    const status: TypingGuardStatus =
+      raw === "active" ||
+      raw === "degraded_no_permission" ||
+      raw === "inactive_platform_stub"
+        ? raw
+        : "unknown";
+    // Don't latch the `probed` flag on an "unknown" response — that's the
+    // dev-mode fallback where invoke returns undefined, and we'd rather
+    // retry once the real Tauri bridge comes online.
+    if (status === "unknown") return;
+    typingGuardProbed = true;
+    setTypingGuardStatus(status);
+    if (status === "degraded_no_permission") {
+      flowLog.typingGuardDegraded(status);
+    }
+  } catch {
+    // IPC not available (e.g. browser dev fallback). Leave status as
+    // "unknown"; the field drops from log lines automatically and any
+    // subsequent caller can retry.
+  }
+}
+
 function fmt(event: string, fields: Fields): string {
   const parts: string[] = [`[flow]`, event.padEnd(22)];
   for (const [k, v] of Object.entries(fields)) {

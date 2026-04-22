@@ -24,11 +24,7 @@ import {
   FLOW_TYPING_STRICT_SPEECH_MS,
   FLOW_TYPING_STRICT_SPEECH_RATIO,
 } from "./flowConstants";
-import {
-  flowLog,
-  setTypingGuardStatus,
-  type TypingGuardStatus,
-} from "./flowObservability";
+import { probeTypingGuardStatusOnce } from "./flowObservability";
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -67,7 +63,6 @@ export function createTypingGuard(deps: TypingGuardDeps): TypingGuard {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let lastKeystrokeMsAgo: number = Number.POSITIVE_INFINITY;
   let lastPollAt: number = 0;
-  let probedInstallStatus = false;
 
   async function pollOnce() {
     try {
@@ -83,34 +78,15 @@ export function createTypingGuard(deps: TypingGuardDeps): TypingGuard {
     }
   }
 
-  // Stage 7: one-shot read of the Rust-side install status. Publishes into
-  // flowObservability so (a) every subsequent log line is stamped with
-  // `typingGuardStatus` and (b) LeftPanel / DebugPanel can subscribe to
-  // render the permission state. Fires `flow.typing_guard_degraded` exactly
-  // once if the tap couldn't install (macOS: Input Monitoring denied).
-  async function probeInstallStatusOnce() {
-    if (probedInstallStatus) return;
-    probedInstallStatus = true;
-    try {
-      const raw = await deps.invoke("get_typing_guard_status");
-      const status: TypingGuardStatus =
-        raw === "active" || raw === "degraded_no_permission" || raw === "inactive_platform_stub"
-          ? raw
-          : "unknown";
-      setTypingGuardStatus(status);
-      if (status === "degraded_no_permission") {
-        flowLog.typingGuardDegraded(status);
-      }
-    } catch {
-      // Command unavailable (e.g. running in the browser dev fallback).
-      // Leave status as "unknown"; log lines drop the field automatically.
-    }
-  }
-
   return {
     start() {
       if (pollTimer) return;
-      void probeInstallStatusOnce();
+      // Belt-and-suspenders: the typing-guard status probe is owned by
+      // `useTypingGuardStatus` so the UI resolves at app startup, but
+      // Flow Mode may spin up before any consuming component mounted
+      // (e.g. hotkey-triggered start with the LeftPanel not yet rendered).
+      // probeTypingGuardStatusOnce is idempotent, so calling here is safe.
+      void probeTypingGuardStatusOnce(deps.invoke);
       void pollOnce();
       pollTimer = setInterval(() => void pollOnce(), FLOW_TYPING_POLL_MS);
     },
