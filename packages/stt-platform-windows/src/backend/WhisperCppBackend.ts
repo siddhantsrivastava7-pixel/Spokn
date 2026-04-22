@@ -7,13 +7,23 @@ import { parseWhisperJsonFile } from "./parseWhisperOutput";
 import { BackendBinaryMissingError } from "../errors";
 import type { LocalSTTBackend, BackendTranscriptionRequest, BackendTranscriptionResponse } from "./backendTypes";
 
-const DEFAULT_BINARY_NAME = "whisper-cli.exe";
+/**
+ * Default whisper.cpp binary filename for the current platform.
+ * macOS / Linux ship the CLI as `whisper-cli`; Windows ships `whisper-cli.exe`.
+ * Exported so `binaryManager` and tests can reference the same spelling.
+ */
+export const DEFAULT_BINARY_NAME =
+  process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
 
 export interface WhisperCppBackendOptions {
   /**
-   * Absolute path to whisper-cli.exe.
-   * Defaults to %LOCALAPPDATA%/stt-platform-windows/bin/whisper-cli.exe.
-   * Can also be set via WHISPER_CPP_BIN environment variable.
+   * Absolute path to the whisper-cli executable. Default per platform:
+   *   - Windows: `%LOCALAPPDATA%/stt-platform-windows/bin/whisper-cli.exe`
+   *   - macOS:   `~/Library/Application Support/spokn/bin/whisper-cli`
+   *   - Linux:   `~/.local/share/spokn/bin/whisper-cli`
+   * Can also be set via the WHISPER_CPP_BIN environment variable, which is
+   * the primary install-path escape hatch for macOS until we ship a bundled
+   * binary or in-app download.
    */
   binaryPath?: string;
   /** Process timeout in ms. Defaults to 5 minutes. */

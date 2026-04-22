@@ -3,18 +3,25 @@ import * as os from "os";
 import * as path from "path";
 import { WindowsModelStore } from "../src/models/WindowsModelStore";
 
-// Redirect LOCALAPPDATA to a temp dir for isolation
+// Redirect app-data root to a temp dir for isolation. Uses STT_DATA_ROOT
+// so the test works across Windows, macOS, and Linux without touching
+// OS-specific env vars.
 let tempRoot: string;
+const originalDataRoot = process.env["STT_DATA_ROOT"];
 
 beforeEach(async () => {
   tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "stt-test-"));
-  process.env["LOCALAPPDATA"] = tempRoot;
-  // Re-require pathUtils so it picks up the new env var
+  process.env["STT_DATA_ROOT"] = tempRoot;
   jest.resetModules();
 });
 
 afterEach(async () => {
   await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  if (originalDataRoot !== undefined) {
+    process.env["STT_DATA_ROOT"] = originalDataRoot;
+  } else {
+    delete process.env["STT_DATA_ROOT"];
+  }
 });
 
 describe("WindowsModelStore", () => {

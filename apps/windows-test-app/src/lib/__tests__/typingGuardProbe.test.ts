@@ -37,7 +37,7 @@ describe("probeTypingGuardStatusOnce", () => {
     expect(mod.getTypingGuardStatus()).toBe("active");
     // No degraded event on the active path.
     expect(
-      warnSpy.mock.calls.some((args) =>
+      warnSpy.mock.calls.some((args: unknown[]) =>
         String(args[0]).includes("typing_guard_degraded"),
       ),
     ).toBe(false);
@@ -50,7 +50,7 @@ describe("probeTypingGuardStatusOnce", () => {
     await mod.probeTypingGuardStatusOnce(invoke);
 
     expect(mod.getTypingGuardStatus()).toBe("degraded_no_permission");
-    const degradedEvents = warnSpy.mock.calls.filter((args) =>
+    const degradedEvents = warnSpy.mock.calls.filter((args: unknown[]) =>
       String(args[0]).includes("typing_guard_degraded"),
     );
     expect(degradedEvents).toHaveLength(1);
@@ -66,7 +66,7 @@ describe("probeTypingGuardStatusOnce", () => {
 
     expect(invoke).toHaveBeenCalledTimes(1);
     // Status transition only notifies once → only one degraded event.
-    const degradedEvents = warnSpy.mock.calls.filter((args) =>
+    const degradedEvents = warnSpy.mock.calls.filter((args: unknown[]) =>
       String(args[0]).includes("typing_guard_degraded"),
     );
     expect(degradedEvents).toHaveLength(1);

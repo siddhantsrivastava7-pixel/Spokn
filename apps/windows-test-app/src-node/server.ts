@@ -23,6 +23,7 @@ import {
   listFeedback,
   currentAdaptiveRules,
 } from "./pipeline";
+import { getModelsDir, sanitizeModelId } from "@stt/platform-windows";
 
 // Port resolution: in dev mode we pin to 3001 so the Vite proxy can target
 // a known address. When launched as a packaged sidecar, the Tauri Rust side
@@ -449,14 +450,10 @@ app.get("/api/models/download", async (req, res) => {
   const send = (event: string, data: unknown) =>
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  const localAppData =
-    process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  const modelDir = path.join(
-    localAppData,
-    "stt-platform-windows",
-    "models",
-    modelId.replace(/[^a-zA-Z0-9._-]/g, "_")
-  );
+  // Route downloaded models through the platform-aware app-data resolver so
+  // macOS writes under `~/Library/Application Support/spokn/models/…` and
+  // Windows continues to use `%LOCALAPPDATA%/stt-platform-windows/models/…`.
+  const modelDir = path.join(getModelsDir(), sanitizeModelId(modelId));
   fs.mkdirSync(modelDir, { recursive: true });
 
   // Reject filenames containing path separators; path.resolve containment is the backstop.
@@ -567,12 +564,18 @@ const server = app.listen(PORT, '127.0.0.1', () => {
   console.log(`[spokn-backend] listening on http://127.0.0.1:${actualPort}`);
   console.log(`[spokn-backend] temp uploads: ${TEMP_DIR}`);
 
-  // Initialise binary in the background — picks CUDA/Vulkan/CPU based on GPU
+  // Initialise the whisper-cli binary in the background:
+  //   - Windows: download the right CUDA/BLAS/CPU variant from GitHub.
+  //   - macOS / Linux: probe known install locations (Homebrew, managed bin
+  //     dir, WHISPER_CPP_BIN). No download path — whisper.cpp publishes no
+  //     POSIX binaries.
   void initBinary((msg) => console.log(`[spokn-binary] ${msg}`)).then((variant) => {
     console.log(`[spokn-binary] ready — variant: ${variant}`);
   }).catch((err) => {
-    console.warn(`[spokn-binary] auto-download failed: ${String(err)}`);
-    console.warn(`[spokn-binary] Place whisper-cli.exe manually in the bin directory to use whisper.cpp`);
+    // The error message from BackendBinaryMissingError already carries
+    // platform-appropriate install hints — just forward it. No generic
+    // `.exe`-flavored tail.
+    console.warn(`[spokn-binary] unavailable: ${String(err)}`);
   });
 });
 

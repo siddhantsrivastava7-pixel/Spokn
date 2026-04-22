@@ -37,7 +37,9 @@ export { WindowsModelStore } from "./models/WindowsModelStore";
 export type { ModelManifest, ModelManifestEntry } from "./models/modelManifest";
 
 // Device profiling
+export { getDeviceProfile } from "./device/getDeviceProfile";
 export { getWindowsDeviceProfile } from "./device/getWindowsDeviceProfile";
+export { getMacOSDeviceProfile } from "./device/getMacOSDeviceProfile";
 
 // Binary management
 export { ensureBinary, getInstalledVariant, chooseBinaryVariant, hasCudaRuntime } from "./binary/binaryManager";
@@ -57,7 +59,17 @@ export {
 export { buildWhisperArgs } from "./backend/buildWhisperArgs";
 export { parseWhisperJsonString } from "./backend/parseWhisperOutput";
 export { resolveModelPath } from "./models/resolveModelPath";
-export { getAppDataRoot, getModelsDir, getBinDir, getFeedbackDir, getFeedbackFilePath } from "./utils/pathUtils";
+export {
+  getAppDataRoot,
+  getModelsDir,
+  getModelDir,
+  getBinDir,
+  getTempDir,
+  getFeedbackDir,
+  getFeedbackFilePath,
+  getManifestPath,
+  sanitizeModelId,
+} from "./utils/pathUtils";
 
 // Feedback store
 export { WindowsFeedbackStore } from "./feedback/WindowsFeedbackStore";

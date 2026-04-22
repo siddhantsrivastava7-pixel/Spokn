@@ -24,7 +24,7 @@ import {
   WhisperCppBackend,
   AdaptiveBackend,
   WindowsFeedbackStore,
-  getWindowsDeviceProfile,
+  getDeviceProfile,
   ensureBinary,
   getInstalledVariant,
 } from "@stt/platform-windows";
@@ -91,7 +91,7 @@ function adapter(): MultiBackendWindowsAdapter {
 }
 
 async function deviceProfile(): Promise<DeviceProfile> {
-  if (!_deviceProfile) _deviceProfile = await getWindowsDeviceProfile();
+  if (!_deviceProfile) _deviceProfile = await getDeviceProfile();
   return _deviceProfile;
 }
 

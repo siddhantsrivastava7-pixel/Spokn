@@ -3,8 +3,10 @@ import * as path from "path";
 import * as https from "https";
 import * as http from "http";
 import { getBinDir } from "../utils/pathUtils";
+import { DEFAULT_BINARY_NAME } from "../backend/WhisperCppBackend";
 import { fileExists, ensureDir, readJsonFile, writeJsonFile } from "../utils/fsUtils";
 import { execProcess } from "../utils/execProcess";
+import { BackendBinaryMissingError } from "../errors";
 import type { DeviceProfile } from "@stt/core";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -69,13 +71,25 @@ function findAssetUrl(release: GithubRelease, variant: BinaryVariant): string | 
 
 /**
  * Picks the best whisper-cli binary for this device and ensures it's installed.
- * Downloads from the latest whisper.cpp GitHub release.
- * Falls back automatically on any failure: cuda12 → cuda11 → blas → cpu.
+ *
+ * Platform behavior:
+ *   - Windows: downloads from the latest whisper.cpp GitHub release. Falls
+ *     back automatically: cuda12 → cuda11 → blas → cpu.
+ *   - macOS / Linux: whisper.cpp does NOT ship prebuilt binaries for these
+ *     platforms (release assets are Windows-only + iOS xcframework + JVM).
+ *     We probe known install locations and return the first hit. Bundled
+ *     binaries or auto-build-from-source are deliberately deferred — this
+ *     keeps the install path honest rather than shipping a broken .exe.
  */
 export async function ensureBinary(
   device: DeviceProfile,
   onProgress?: (msg: string) => void
 ): Promise<EnsureBinaryResult> {
+  // macOS / Linux: probe, don't download.
+  if (process.platform !== "win32") {
+    return ensureBinaryPosix(onProgress);
+  }
+
   const manifestPath = path.join(getBinDir(), "binary-manifest.json");
   const desired = chooseBinaryVariant(device);
 
@@ -128,6 +142,95 @@ export async function getInstalledVariant(): Promise<BinaryVariant | null> {
   return null;
 }
 
+// ── POSIX (macOS / Linux) probe path ──────────────────────────────────────────
+//
+// whisper.cpp doesn't publish macOS or Linux binaries. We look in the places
+// a user is most likely to have installed `whisper-cli` manually, in priority
+// order:
+//
+//   1. `WHISPER_CPP_BIN` env var — explicit override; always wins.
+//   2. `getBinDir()/whisper-cli` — our own managed location, for future
+//      bundled-binary or build-from-source installers.
+//   3. Homebrew: `/opt/homebrew/bin/whisper-cli` (Apple Silicon default prefix),
+//      `/usr/local/bin/whisper-cli` (Intel Mac + common Linux prefix).
+//   4. `$HOMEBREW_PREFIX/bin/whisper-cli` — for non-default Homebrew installs.
+//
+// Everything we find gets pinned into `binary-manifest.json` under the
+// synthesized "cpu" variant. The variant field exists for Windows's
+// CPU/BLAS/CUDA dispatch; on macOS there's no such fanout today (Metal
+// acceleration is compile-time, not a separate binary).
+//
+// Error path throws `BackendBinaryMissingError` with a message the UI can
+// surface verbatim. No silent fallbacks — the whole point of this function
+// is to fail loudly when nothing is available rather than write a Windows
+// .exe to a Library dir.
+
+async function ensureBinaryPosix(
+  onProgress?: (msg: string) => void,
+): Promise<EnsureBinaryResult> {
+  const manifestPath = path.join(getBinDir(), "binary-manifest.json");
+
+  // Re-use a prior manifest if the path still resolves.
+  try {
+    const manifest = await readJsonFile<BinaryManifest>(manifestPath);
+    if (manifest.variant === "cpu" && (await fileExists(manifest.binaryPath))) {
+      return { binaryPath: manifest.binaryPath, variant: "cpu", alreadyInstalled: true };
+    }
+  } catch { /* no manifest yet — probe */ }
+
+  onProgress?.("Looking for whisper-cli…");
+  const found = await findPosixWhisperBinary();
+
+  if (!found) {
+    const instructions = buildPosixInstallHint();
+    throw new BackendBinaryMissingError(instructions);
+  }
+
+  onProgress?.(`Found whisper-cli at ${found}`);
+  await ensureDir(getBinDir());
+  const manifest: BinaryManifest = {
+    version: "probe",
+    variant: "cpu",
+    binaryPath: found,
+    installedAt: new Date().toISOString(),
+  };
+  await writeJsonFile(manifestPath, manifest);
+  return { binaryPath: found, variant: "cpu", alreadyInstalled: false };
+}
+
+async function findPosixWhisperBinary(): Promise<string | null> {
+  const envOverride = process.env["WHISPER_CPP_BIN"];
+  if (envOverride && (await fileExists(envOverride))) return envOverride;
+
+  const candidates = [
+    path.join(getBinDir(), DEFAULT_BINARY_NAME),
+    "/opt/homebrew/bin/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+  ];
+
+  const brewPrefix = process.env["HOMEBREW_PREFIX"];
+  if (brewPrefix) candidates.push(path.join(brewPrefix, "bin", "whisper-cli"));
+
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
+function buildPosixInstallHint(): string {
+  const isMac = process.platform === "darwin";
+  const managed = path.join(getBinDir(), DEFAULT_BINARY_NAME);
+  const lines = [
+    "whisper-cli was not found on this system.",
+    isMac
+      ? "Install it with Homebrew:  brew install whisper-cpp"
+      : "Install it via your package manager (e.g. apt/dnf/pacman) or build from source.",
+    `Or drop the binary at: ${managed}`,
+    "Or set WHISPER_CPP_BIN to an absolute path to the binary.",
+  ];
+  return lines.join("\n");
+}
+
 /** Picks the ideal variant for this device. */
 export function chooseBinaryVariant(device: DeviceProfile): BinaryVariant {
   const isNvidia = device.gpuVendor === "nvidia" && (device.gpuVramMB ?? 0) >= 2_048;
@@ -145,6 +248,10 @@ export function chooseBinaryVariant(device: DeviceProfile): BinaryVariant {
 
 /** Returns true if CUDA runtime DLLs are present on this machine. */
 export async function hasCudaRuntime(): Promise<boolean> {
+  // CUDA only matters on Windows (whisper-cublas-*.zip). macOS uses Metal,
+  // which is a compile-time choice, not a runtime DLL detection.
+  if (process.platform !== "win32") return false;
+
   const candidates = [
     "C:\\Windows\\System32\\cudart64_12.dll",
     "C:\\Windows\\System32\\cudart64_110.dll",

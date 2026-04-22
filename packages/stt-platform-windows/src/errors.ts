@@ -21,10 +21,12 @@ export class ModelFileNotFoundError extends Error {
 export class BackendBinaryMissingError extends Error {
   readonly binaryPath: string;
   constructor(binaryPath: string) {
-    super(
-      `whisper.cpp binary not found at: ${binaryPath}\n` +
-      `Place whisper-cli.exe in the bin directory or set WHISPER_CPP_BIN env var.`
-    );
+    // On macOS/Linux the caller (`ensureBinary`'s POSIX branch) supplies a
+    // multi-line hint as the `binaryPath` — it's the whole install-guidance
+    // block, not a path. The generic tail was trimmed because it used to
+    // assume `whisper-cli.exe` even on macOS. Use the supplied message
+    // verbatim; producers are responsible for making it useful.
+    super(`whisper.cpp binary not available. ${binaryPath}`);
     this.name = "BackendBinaryMissingError";
     this.binaryPath = binaryPath;
   }
