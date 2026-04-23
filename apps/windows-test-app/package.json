@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "build:frontend": "tsc && vite build",
     "build:backend": "node scripts/build-backend.mjs",
+    "package:whisper:macos": "node scripts/package-whisper-macos.mjs",
     "build:prerelease": "npm run build:frontend && npm run build:backend",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json",
     "test": "vitest run",

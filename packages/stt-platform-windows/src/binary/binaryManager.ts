@@ -145,15 +145,19 @@ export async function getInstalledVariant(): Promise<BinaryVariant | null> {
 // ── POSIX (macOS / Linux) probe path ──────────────────────────────────────────
 //
 // whisper.cpp doesn't publish macOS or Linux binaries. We look in the places
-// a user is most likely to have installed `whisper-cli` manually, in priority
-// order:
+// a user is most likely to have whisper-cli available, in priority order:
 //
-//   1. `WHISPER_CPP_BIN` env var — explicit override; always wins.
-//   2. `getBinDir()/whisper-cli` — our own managed location, for future
-//      bundled-binary or build-from-source installers.
-//   3. Homebrew: `/opt/homebrew/bin/whisper-cli` (Apple Silicon default prefix),
+//   1. `SPOKN_BUNDLED_WHISPER_CLI` env var — set by the Rust side to point
+//      at the copy shipped inside the app bundle (macOS `.app/Contents/
+//      Resources/whisper/bin/whisper-cli`). Wins over everything else so
+//      signed + notarized installs never fall through to a system binary
+//      that may have mismatched dylibs or ABI.
+//   2. `WHISPER_CPP_BIN` env var — explicit developer override.
+//   3. `getBinDir()/whisper-cli` — our own managed location, for users who
+//      dropped a binary in manually or for future in-app installers.
+//   4. Homebrew: `/opt/homebrew/bin/whisper-cli` (Apple Silicon default prefix),
 //      `/usr/local/bin/whisper-cli` (Intel Mac + common Linux prefix).
-//   4. `$HOMEBREW_PREFIX/bin/whisper-cli` — for non-default Homebrew installs.
+//   5. `$HOMEBREW_PREFIX/bin/whisper-cli` — for non-default Homebrew installs.
 //
 // Everything we find gets pinned into `binary-manifest.json` under the
 // synthesized "cpu" variant. The variant field exists for Windows's
@@ -199,15 +203,22 @@ async function ensureBinaryPosix(
 }
 
 async function findPosixWhisperBinary(): Promise<string | null> {
+  // 1. Bundled-with-app copy — highest priority so a signed install never
+  //    accidentally falls through to a Homebrew binary with different dylibs.
+  //    Populated by the Rust side at startup when a resource exists.
+  const bundled = process.env["SPOKN_BUNDLED_WHISPER_CLI"];
+  if (bundled && (await fileExists(bundled))) return bundled;
+
+  // 2. Developer override.
   const envOverride = process.env["WHISPER_CPP_BIN"];
   if (envOverride && (await fileExists(envOverride))) return envOverride;
 
+  // 3 & 4. Managed bin dir, then Homebrew prefixes.
   const candidates = [
     path.join(getBinDir(), DEFAULT_BINARY_NAME),
     "/opt/homebrew/bin/whisper-cli",
     "/usr/local/bin/whisper-cli",
   ];
-
   const brewPrefix = process.env["HOMEBREW_PREFIX"];
   if (brewPrefix) candidates.push(path.join(brewPrefix, "bin", "whisper-cli"));
 

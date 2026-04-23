@@ -33,6 +33,11 @@
     "longDescription": "Spokn is a private, offline speech-to-text app. All transcription runs locally — no audio ever leaves your machine.",
     "category": "Productivity",
     "externalBin": ["binaries/spokn-backend"],
+    "resources": {
+      "resources/whisper/bin/*": "whisper/bin/",
+      "resources/whisper/lib/*": "whisper/lib/",
+      "resources/whisper/libexec/*": "whisper/libexec/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

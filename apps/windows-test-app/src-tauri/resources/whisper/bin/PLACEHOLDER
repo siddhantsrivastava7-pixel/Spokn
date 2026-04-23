@@ -1,0 +1,3 @@
+Placeholder — keeps the Tauri resource glob non-empty on fresh clones.
+Overwritten every time scripts/package-whisper-macos.mjs runs.
+Not harmful in the shipped bundle — see resources/README.md.

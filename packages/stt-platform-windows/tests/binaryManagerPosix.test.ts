@@ -32,12 +32,14 @@ const PROFILE: DeviceProfile = {
 describePosix("binaryManager.ensureBinary (POSIX)", () => {
   const originalDataRoot = process.env["STT_DATA_ROOT"];
   const originalWhisperBin = process.env["WHISPER_CPP_BIN"];
+  const originalBundled = process.env["SPOKN_BUNDLED_WHISPER_CLI"];
   let tempRoot: string;
 
   beforeEach(async () => {
     tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "stt-bm-"));
     process.env["STT_DATA_ROOT"] = tempRoot;
     delete process.env["WHISPER_CPP_BIN"];
+    delete process.env["SPOKN_BUNDLED_WHISPER_CLI"];
     jest.resetModules();
   });
 
@@ -47,6 +49,8 @@ describePosix("binaryManager.ensureBinary (POSIX)", () => {
     else delete process.env["STT_DATA_ROOT"];
     if (originalWhisperBin !== undefined) process.env["WHISPER_CPP_BIN"] = originalWhisperBin;
     else delete process.env["WHISPER_CPP_BIN"];
+    if (originalBundled !== undefined) process.env["SPOKN_BUNDLED_WHISPER_CLI"] = originalBundled;
+    else delete process.env["SPOKN_BUNDLED_WHISPER_CLI"];
   });
 
   it("returns the WHISPER_CPP_BIN override when the file exists", async () => {
@@ -61,6 +65,41 @@ describePosix("binaryManager.ensureBinary (POSIX)", () => {
     expect(result.binaryPath).toBe(fakeBinary);
     expect(result.variant).toBe("cpu");
     expect(result.binaryPath.endsWith(".exe")).toBe(false);
+  });
+
+  it("SPOKN_BUNDLED_WHISPER_CLI wins over WHISPER_CPP_BIN and managed bin dir", async () => {
+    // Set up all three candidate locations, each pointing at a different file.
+    // The bundled one must be chosen — this is what a signed macOS install
+    // does at runtime, and we never want a system binary to take over.
+    const bundled = path.join(tempRoot, "bundled-whisper-cli");
+    const override = path.join(tempRoot, "override-whisper-cli");
+    const binDir = path.join(tempRoot, "bin");
+    await fs.promises.mkdir(binDir, { recursive: true });
+    const managed = path.join(binDir, "whisper-cli");
+
+    for (const p of [bundled, override, managed]) {
+      await fs.promises.writeFile(p, "#!/bin/sh\n", { mode: 0o755 });
+    }
+
+    process.env["SPOKN_BUNDLED_WHISPER_CLI"] = bundled;
+    process.env["WHISPER_CPP_BIN"] = override;
+
+    const { ensureBinary: reloaded } = await import("../src/binary/binaryManager");
+    const result = await reloaded(PROFILE);
+    expect(result.binaryPath).toBe(bundled);
+  });
+
+  it("falls through to WHISPER_CPP_BIN when SPOKN_BUNDLED_WHISPER_CLI points at a nonexistent file", async () => {
+    // The env var might be set (e.g. leftover from a stale shell) but the
+    // file might be gone. We should cleanly fall back, not throw.
+    const override = path.join(tempRoot, "override-whisper-cli");
+    await fs.promises.writeFile(override, "#!/bin/sh\n", { mode: 0o755 });
+    process.env["SPOKN_BUNDLED_WHISPER_CLI"] = path.join(tempRoot, "nope");
+    process.env["WHISPER_CPP_BIN"] = override;
+
+    const { ensureBinary: reloaded } = await import("../src/binary/binaryManager");
+    const result = await reloaded(PROFILE);
+    expect(result.binaryPath).toBe(override);
   });
 
   it("finds a binary dropped into the managed bin dir", async () => {

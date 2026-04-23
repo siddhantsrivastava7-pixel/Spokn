@@ -23,6 +23,19 @@ apps/*/src-tauri/binaries/*
 spokn-backend*.exe
 spokn-backend
 
+# Bundled whisper runtime — populated by scripts/package-whisper-macos.mjs
+# just before `tauri build` on macOS. The bin/ lib/ libexec/ subdirs each
+# have a committed PLACEHOLDER that keeps the Tauri resource globs
+# non-empty on a fresh clone; everything else is ignored (binary
+# artifacts are arch-specific and large). See
+# apps/*/src-tauri/resources/README.md for the full layout.
+apps/*/src-tauri/resources/whisper/bin/*
+apps/*/src-tauri/resources/whisper/lib/*
+apps/*/src-tauri/resources/whisper/libexec/*
+!apps/*/src-tauri/resources/whisper/bin/PLACEHOLDER
+!apps/*/src-tauri/resources/whisper/lib/PLACEHOLDER
+!apps/*/src-tauri/resources/whisper/libexec/PLACEHOLDER
+
 # Local app data / cached models (never commit model weights)
 # NOTE: do not add `models/` here — there is a source directory
 # packages/stt-core/src/models/ that must be committed.

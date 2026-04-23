@@ -512,11 +512,75 @@ pub fn run() {
             // backend binds to a random free port and announces it via stdout
             // as `SPOKN_PORT=<n>`. We stash the port in app state so the
             // frontend can discover it via `get_backend_port`.
-            let sidecar = app
+            let mut sidecar = app
                 .shell()
                 .sidecar("spokn-backend")
                 .map_err(|e| format!("sidecar lookup failed: {e}"))?
                 .args(["--port=0"]);
+
+            // On macOS, tell the backend where the bundled whisper-cli lives.
+            // Resolved from the app's Resources dir — exists only when the
+            // app was packaged with `resources/whisper/bin/whisper-cli`
+            // (see `scripts/package-whisper-macos.mjs`). The backend's
+            // POSIX probe prefers this path over Homebrew / $PATH, so a
+            // signed install never accidentally runs a system binary with
+            // a mismatched dylib ABI.
+            //
+            // On dev runs without the packaged resource, the file simply
+            // doesn't exist, we don't set the env, and the backend falls
+            // through to its existing Homebrew / WHISPER_CPP_BIN probes.
+            //
+            // Windows + Linux: no-op here — no resource expected, and
+            // `WhisperCppBackend`'s Windows branch uses a different install
+            // flow (download) that doesn't consult this env.
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(res_dir) = app.path().resource_dir() {
+                    let bundled_bin = res_dir
+                        .join("whisper")
+                        .join("bin")
+                        .join("whisper-cli");
+                    if bundled_bin.exists() {
+                        eprintln!(
+                            "[spokn-backend] bundled whisper-cli found at {}",
+                            bundled_bin.display()
+                        );
+                        sidecar = sidecar.env(
+                            "SPOKN_BUNDLED_WHISPER_CLI",
+                            bundled_bin.to_string_lossy().to_string(),
+                        );
+                        // Expose the lib dir for anything that needs it later
+                        // (currently only consumed by the backend's probe log).
+                        let bundled_lib_dir = res_dir.join("whisper").join("lib");
+                        if bundled_lib_dir.exists() {
+                            sidecar = sidecar.env(
+                                "SPOKN_BUNDLED_WHISPER_LIB_DIR",
+                                bundled_lib_dir.to_string_lossy().to_string(),
+                            );
+                        }
+                        // ggml backend loader: `GGML_BACKEND_PATH` accepts a
+                        // single file, not a directory. Point it at the
+                        // Metal backend so Apple Silicon Macs without
+                        // Homebrew still get GPU acceleration. ggml also
+                        // scans a baked-in default path (currently the
+                        // Homebrew Cellar) — that silently no-ops when
+                        // absent, and libggml's built-in CPU reference
+                        // keeps transcription working on any fallback.
+                        // Intel-Mac BLAS acceleration needs a separate
+                        // launch strategy (tracked as a v2 improvement).
+                        let metal_backend = res_dir
+                            .join("whisper")
+                            .join("libexec")
+                            .join("libggml-metal.so");
+                        if metal_backend.exists() {
+                            sidecar = sidecar.env(
+                                "GGML_BACKEND_PATH",
+                                metal_backend.to_string_lossy().to_string(),
+                            );
+                        }
+                    }
+                }
+            }
             let (mut rx, child) = sidecar
                 .spawn()
                 .map_err(|e| format!("sidecar spawn failed: {e}"))?;
